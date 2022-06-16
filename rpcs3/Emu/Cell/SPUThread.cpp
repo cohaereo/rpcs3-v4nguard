@@ -985,7 +985,7 @@ void spu_int_ctrl_t::set(u64 ints)
 			if (auto handler = tag->handler; lv2_obj::check(handler))
 			{
 				rlock.unlock();
-				handler->exec();
+				thread_ctrl::notify(*handler->thread);
 			}
 		}
 	}
@@ -1040,9 +1040,17 @@ std::string spu_thread::dump_regs() const
 
 	for (u32 i = 0; i < 128; i++, ret += '\n')
 	{
-		fmt::append(ret, "%s: ", spu_reg_name[i]);
-
 		const auto r = gpr[i];
+
+		auto [is_const, const_value] = dis_asm.try_get_const_value(i, pc);
+
+		if (const_value != r)
+		{
+			// Expectation of pretictable code path has not been met (such as a branch directly to the instruction)
+			is_const = false;
+		}
+
+		fmt::append(ret, "%s%s ", spu_reg_name[i], is_const ? "©" : ":");
 
 		if (auto [size, dst, src] = SPUDisAsm::try_get_insert_mask_info(r); size)
 		{
@@ -1301,6 +1309,7 @@ void spu_thread::cpu_init()
 
 	ch_dec_start_timestamp = get_timebased_time();
 	ch_dec_value = option & SYS_SPU_THREAD_OPTION_DEC_SYNC_TB_ENABLE ? ~static_cast<u32>(ch_dec_start_timestamp) : 0;
+	is_dec_frozen = false;
 
 	if (get_type() >= spu_type::raw)
 	{
@@ -1405,6 +1414,9 @@ extern thread_local std::string(*g_tls_log_prefix)();
 
 void spu_thread::cpu_task()
 {
+#ifdef __APPLE__
+	pthread_jit_write_protect_np(true);
+#endif
 	// Get next PC and SPU Interrupt status
 	pc = status_npc.load().npc;
 
@@ -1865,6 +1877,8 @@ void spu_thread::do_dma_transfer(spu_thread* _this, const spu_mfc_cmd& args, u8*
 	{
 		src = zero_buf;
 	}
+
+	rsx::reservation_lock<false, 1> rsx_lock(eal, args.size, !is_get && g_cfg.core.rsx_fifo_accuracy && !g_cfg.core.spu_accurate_dma);
 
 	if ((!g_use_rtm && !is_get) || g_cfg.core.spu_accurate_dma)  [[unlikely]]
 	{
@@ -2795,7 +2809,6 @@ void do_cell_atomic_128_store(u32 addr, const void* to_write)
 		shared_mem = addr;
 	}
 
-	if (g_use_rtm) [[likely]]
 	{
 		auto& sdata = *vm::get_super_ptr<spu_rdata_t>(addr);
 		auto& res = *utils::bless<atomic_t<u128>>(vm::g_reservations + (addr & 0xff80) / 2);
@@ -2861,11 +2874,21 @@ void do_cell_atomic_128_store(u32 addr, const void* to_write)
 			}
 		}
 
-		u64 result = 0;
+		u64 result = 1;
 
 		if (cpu->state & cpu_flag::pause)
 		{
 			result = 0;
+		}
+		else if (!g_use_rtm)
+		{
+			// Provoke page fault
+			vm::_ref<atomic_t<u32>>(addr) += 0;
+
+			// Hard lock
+			vm::writer_lock lock(addr);
+			mov_rdata(sdata, *static_cast<const spu_rdata_t*>(to_write));
+			vm::reservation_acquire(addr) += 32;
 		}
 		else if (cpu->id_type() != 2)
 		{
@@ -2896,22 +2919,6 @@ void do_cell_atomic_128_store(u32 addr, const void* to_write)
 
 		static_cast<void>(cpu->test_stopped());
 	}
-	else
-	{
-		auto& data = vm::_ref<spu_rdata_t>(addr);
-		auto [res, time0] = vm::reservation_lock(addr);
-
-		*reinterpret_cast<atomic_t<u32>*>(&data) += 0;
-
-		auto& super_data = *vm::get_super_ptr<spu_rdata_t>(addr);
-		{
-			// Full lock (heavyweight)
-			// TODO: vm::check_addr
-			vm::writer_lock lock(addr);
-			mov_rdata(super_data, *static_cast<const spu_rdata_t*>(to_write));
-			res += 64;
-		}
-	}
 }
 
 void spu_thread::do_putlluc(const spu_mfc_cmd& args)
@@ -2925,13 +2932,14 @@ void spu_thread::do_putlluc(const spu_mfc_cmd& args)
 		// Try to process PUTLLUC using PUTLLC when a reservation is active:
 		// If it fails the reservation is cleared, LR event is set and we fallback to the main implementation
 		// All of this is done atomically in PUTLLC
-		if (do_putllc(args))
+		if (!(ch_events.load().events & SPU_EVENT_LR) && do_putllc(args))
 		{
 			// Success, return as our job was done here
 			return;
 		}
 
 		// Failure, fallback to the main implementation
+		raddr = 0;
 	}
 
 	do_cell_atomic_128_store(addr, _ptr<spu_rdata_t>(args.lsa & 0x3ff80));
@@ -3225,6 +3233,12 @@ bool spu_thread::process_mfc_cmd()
 		alignas(64) spu_rdata_t temp;
 		u64 ntime;
 		rsx::reservation_lock rsx_lock(addr, 128);
+
+		if (ch_events.load().events & SPU_EVENT_LR)
+		{
+			// There is no longer a need to concern about LR event if it has already been raised.
+			raddr = 0;
+		}
 
 		if (raddr)
 		{
@@ -3633,6 +3647,12 @@ bool spu_thread::reservation_check(u32 addr, const decltype(rdata)& data) const
 	return !res;
 }
 
+std::pair<u32, u32> spu_thread::read_dec() const
+{
+	const u64 res = ch_dec_value - (is_dec_frozen ? 0 : (get_timebased_time() - ch_dec_start_timestamp));
+	return {static_cast<u32>(res), static_cast<u32>(res >> 32)};
+}
+
 spu_thread::ch_events_t spu_thread::get_events(u32 mask_hint, bool waiting, bool reading)
 {
 	if (auto mask1 = ch_events.load().mask; mask1 & ~SPU_EVENT_IMPLEMENTED)
@@ -3656,7 +3676,7 @@ retry:
 	// SPU Decrementer Event on underflow (use the upper 32-bits to determine it)
 	if (mask_hint & SPU_EVENT_TM)
 	{
-		if (const u64 res = (ch_dec_value - (get_timebased_time() - ch_dec_start_timestamp)) >> 32)
+		if (const u64 res = read_dec().second)
 		{
 			// Set next event to the next time the decrementer underflows
 			ch_dec_start_timestamp -= res << 32;
@@ -3913,7 +3933,7 @@ s64 spu_thread::get_ch_value(u32 ch)
 
 	case SPU_RdDec:
 	{
-		u32 out = ch_dec_value - static_cast<u32>(get_timebased_time() - ch_dec_start_timestamp);
+		u32 out = read_dec().first;
 
 		//Polling: We might as well hint to the scheduler to slot in another thread since this one is counting down
 		if (g_cfg.core.spu_loop_detection && out > spu::scheduler::native_jiffy_duration_us)
@@ -3942,40 +3962,50 @@ s64 spu_thread::get_ch_value(u32 ch)
 
 		spu_function_logger logger(*this, "MFC Events read");
 
-		if (mask1 & SPU_EVENT_LR && raddr)
+		state += cpu_flag::wait;
+
+		using resrv_ptr = std::add_pointer_t<const decltype(rdata)>;
+
+		resrv_ptr resrv_mem = vm::get_super_ptr<decltype(rdata)>(raddr);
+		std::shared_ptr<utils::shm> rdata_shm;
+
+		// Does not need to safe-access reservation if LR is the only event masked
+		// Because it's either an access violation or a livelock if an invalid memory is passed
+		if (raddr && mask1 > SPU_EVENT_LR)
 		{
-			if (mask1 != SPU_EVENT_LR && mask1 != SPU_EVENT_LR + SPU_EVENT_TM)
+			auto area = vm::get(vm::any, raddr);
+
+			if (area && (area->flags & vm::preallocated))
 			{
-				// Combining LR with other flags needs another solution
-				fmt::throw_exception("Not supported: event mask 0x%x", mask1);
+				if (!vm::check_addr(raddr))
+				{
+					resrv_mem = nullptr;
+				}
+			}
+			else if (area)
+			{
+				// Ensure possesion over reservation memory so it won't be deallocated
+				auto [base_addr, shm_] = area->peek(raddr);
+
+				if (shm_)
+				{
+					const u32 data_offs = raddr - base_addr;
+					rdata_shm = std::move(shm_);
+					resrv_mem = reinterpret_cast<resrv_ptr>(rdata_shm->get() + data_offs);
+				}
 			}
 
-			for (; !events.count; events = get_events(mask1, false, true))
+			if (!resrv_mem)
 			{
-				const auto old = state.add_fetch(cpu_flag::wait);
-
-				if (is_stopped(old))
-				{
-					return -1;
-				}
-
-				if (is_paused(old))
-				{
-					// Ensure reservation data won't change while paused for debugging purposes
-					check_state();
-					continue;
-				}
-
-				vm::reservation_notifier(raddr).wait(rtime, -128, atomic_wait_timeout{100'000});
+				spu_log.error("A dangling reservation address has been found while reading SPU_RdEventStat channel. (addr=0x%x, events_mask=0x%x)", raddr, mask1);
+				raddr = 0;
+				set_events(SPU_EVENT_LR);
 			}
-
-			check_state();
-			return events.events & mask1;
 		}
 
-		for (; !events.count; events = get_events(mask1, true, true))
+		for (; !events.count; events = get_events(mask1 & ~SPU_EVENT_LR, true, true))
 		{
-			const auto old = state.add_fetch(cpu_flag::wait);
+			const auto old = +state;
 
 			if (is_stopped(old))
 			{
@@ -3984,7 +4014,28 @@ s64 spu_thread::get_ch_value(u32 ch)
 
 			if (is_paused(old))
 			{
+				// Ensure spu_thread::rdata's stagnancy while the thread is paused for debugging purposes
 				check_state();
+				state += cpu_flag::wait;
+				continue;
+			}
+
+			// Optimized check
+			if (raddr && (!vm::check_addr(raddr) || rtime != vm::reservation_acquire(raddr) || !cmp_rdata(rdata, *resrv_mem)))
+			{
+				raddr = 0;
+				set_events(SPU_EVENT_LR);
+				continue;
+			}
+
+			if (raddr)
+			{
+				thread_ctrl::wait_on_custom<2>([&](atomic_wait::list<4>& list)
+				{
+					list.set<0>(state, old);
+					list.set<1>(vm::reservation_notifier(raddr), rtime, -128);
+				}, 100);
+
 				continue;
 			}
 
@@ -4298,6 +4349,7 @@ bool spu_thread::set_ch_value(u32 ch, u32 value)
 		get_events(SPU_EVENT_TM); // Don't discard possibly occured old event
 		ch_dec_start_timestamp = get_timebased_time();
 		ch_dec_value = value;
+		is_dec_frozen = false;
 		return true;
 	}
 
@@ -4333,9 +4385,13 @@ bool spu_thread::set_ch_value(u32 ch, u32 value)
 		// "Collect" events before final acknowledgment
 		get_events(value);
 
-		if (ch_events.atomic_op([&](ch_events_t& events)
+		bool freeze_dec = false;
+
+		const bool check_intr = ch_events.atomic_op([&](ch_events_t& events)
 		{
 			events.events &= ~value;
+
+			freeze_dec = !!((value & SPU_EVENT_TM) & ~events.mask);
 
 			if (events.events & events.mask)
 			{
@@ -4344,7 +4400,16 @@ bool spu_thread::set_ch_value(u32 ch, u32 value)
 			}
 
 			return false;
-		}))
+		});
+
+		if (!is_dec_frozen && freeze_dec)
+		{
+			// Save current time, this will be the reported value until the decrementer resumes
+			ch_dec_value = read_dec().first;
+			is_dec_frozen = true;
+		}
+
+		if (check_intr)
 		{
 			// Check interrupts in case count is 1
 			if (check_mfc_interrupts(pc + 4))
@@ -4969,8 +5034,24 @@ void fmt_class_string<spu_channel_4_t>::format(std::string& out, u64 arg)
 {
 	const auto& ch = get_object(arg);
 
-	// TODO (use try_read)
-	fmt::append(out, "count = %d", ch.get_count());
+	u32 vals[4]{};
+	const uint count = ch.try_read(vals);
+
+	fmt::append(out, "count = %d, data:\n", count);
+
+	out += "{ ";
+
+	for (u32 i = 0; i < count;)
+	{
+		fmt::append(out, "0x%x", vals[i]);
+
+		if (++i != count)
+		{
+			out += ", ";
+		}
+	}
+
+	out += " }\n";
 }
 
 DECLARE(spu_thread::g_raw_spu_ctr){};

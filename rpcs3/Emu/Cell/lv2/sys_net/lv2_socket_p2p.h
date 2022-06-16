@@ -7,7 +7,7 @@ class lv2_socket_p2p : public lv2_socket
 public:
 	lv2_socket_p2p(lv2_socket_family family, lv2_socket_type type, lv2_ip_protocol protocol);
 
-	std::tuple<bool, s32, sys_net_sockaddr> accept(bool is_lock = true) override;
+	std::tuple<bool, s32, std::shared_ptr<lv2_socket>, sys_net_sockaddr> accept(bool is_lock = true) override;
 	s32 bind(const sys_net_sockaddr& addr, s32 ps3_id) override;
 
 	std::optional<s32> connect(const sys_net_sockaddr& addr) override;
@@ -41,6 +41,4 @@ protected:
 	u32 bound_addr = 0;
 	// Queue containing received packets from network_thread for SYS_NET_SOCK_DGRAM_P2P sockets
 	std::queue<std::pair<sys_net_sockaddr_in_p2p, std::vector<u8>>> data{};
-	// ID of the real socket for the actual bound udp port
-	socket_type socket{};
 };

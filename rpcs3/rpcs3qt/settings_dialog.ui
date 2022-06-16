@@ -1031,13 +1031,26 @@
              </widget>
             </item>
             <item>
-             <widget class="QGroupBox" name="gb_audio_downmix">
+             <widget class="QGroupBox" name="gb_audio_format">
               <property name="title">
-               <string>Audio Channels</string>
+               <string>Audio Format</string>
               </property>
-              <layout class="QVBoxLayout" name="gb_audio_channels_layout">
+              <layout class="QVBoxLayout" name="gb_audio_format_layout">
                <item>
-                <widget class="QComboBox" name="combo_audio_downmix"/>
+                <widget class="QComboBox" name="combo_audio_format"/>
+               </item>
+               <item>
+                <widget class="QListWidget" name="list_audio_formats">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="selectionMode">
+                  <enum>QAbstractItemView::ExtendedSelection</enum>
+                 </property>
+                </widget>
                </item>
               </layout>
              </widget>
@@ -1049,16 +1062,16 @@
               </property>
               <layout class="QVBoxLayout" name="gb_audio_settings_layout">
                <item>
-                <widget class="QCheckBox" name="audioDump">
+                <widget class="QCheckBox" name="convert">
                  <property name="text">
-                  <string>Dump to File</string>
+                  <string>Convert to 16-bit</string>
                  </property>
                 </widget>
                </item>
                <item>
-                <widget class="QCheckBox" name="convert">
+                <widget class="QCheckBox" name="audioDump">
                  <property name="text">
-                  <string>Convert to 16-bit</string>
+                  <string>Dump to File</string>
                  </property>
                 </widget>
                </item>
@@ -1077,18 +1090,6 @@
                   </size>
                  </property>
                 </spacer>
-               </item>
-              </layout>
-             </widget>
-            </item>
-            <item>
-             <widget class="QGroupBox" name="gb_music_handler">
-              <property name="title">
-               <string>Music Handler</string>
-              </property>
-              <layout class="QVBoxLayout" name="gb_music_handler_layout">
-               <item>
-                <widget class="QComboBox" name="musicHandlerBox"/>
                </item>
               </layout>
              </widget>
@@ -1113,6 +1114,42 @@
           </item>
           <item>
            <layout class="QVBoxLayout" name="audioTabLayoutTopMiddle">
+            <item>
+             <widget class="QGroupBox" name="gb_audio_provider">
+              <property name="title">
+               <string>Audio Provider</string>
+              </property>
+              <layout class="QVBoxLayout" name="gb_audio_provider_layout">
+               <item>
+                <widget class="QComboBox" name="audioProviderBox"/>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="gb_audio_avport">
+              <property name="title">
+               <string>RSXAudio Avport</string>
+              </property>
+              <layout class="QVBoxLayout" name="gb_audio_avport_layout">
+               <item>
+                <widget class="QComboBox" name="audioAvportBox"/>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="gb_music_handler">
+              <property name="title">
+               <string>Music Handler</string>
+              </property>
+              <layout class="QVBoxLayout" name="gb_music_handler_layout">
+               <item>
+                <widget class="QComboBox" name="musicHandlerBox"/>
+               </item>
+              </layout>
+             </widget>
+            </item>
             <item>
              <widget class="QGroupBox" name="gb_audio_volume">
               <property name="title">
@@ -2248,6 +2285,49 @@
              </widget>
             </item>
             <item>
+             <widget class="QGroupBox" name="gb_clockScale">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Minimum">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="title">
+               <string>Clocks Scale</string>
+              </property>
+              <layout class="QVBoxLayout" name="gb_clockScale_layout">
+               <item>
+                <widget class="QSlider" name="clockScale">
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="clockScaleLayout" stretch="1,0">
+                 <item>
+                  <widget class="QLabel" name="clockScaleText">
+                   <property name="text">
+                    <string>100%</string>
+                   </property>
+                   <property name="alignment">
+                    <set>Qt::AlignCenter</set>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="clockScaleReset">
+                   <property name="text">
+                    <string>Reset</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
              <spacer name="advancedTabSpacerLeft">
               <property name="orientation">
                <enum>Qt::Vertical</enum>
@@ -2284,9 +2364,6 @@
                  <property name="selectionMode">
                   <enum>QAbstractItemView::ExtendedSelection</enum>
                  </property>
-                 <property name="viewMode">
-                  <enum>QListView::ListMode</enum>
-                 </property>
                 </widget>
                </item>
                <item>
@@ -2299,9 +2376,6 @@
                  </property>
                  <property name="selectionMode">
                   <enum>QAbstractItemView::ExtendedSelection</enum>
-                 </property>
-                 <property name="viewMode">
-                  <enum>QListView::ListMode</enum>
                  </property>
                 </widget>
                </item>
@@ -2366,6 +2440,13 @@
                 </widget>
                </item>
                <item>
+                <widget class="QCheckBox" name="forceDisableExclusiveFullscreenMode">
+                 <property name="text">
+                  <string>Force Disable Exclusive Fullscreen Mode</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
                 <widget class="QCheckBox" name="disableOnDiskShaderCache">
                  <property name="text">
                   <string>Disable On-Disk Shader Cache</string>
@@ -2386,6 +2467,20 @@
                  </property>
                 </widget>
                </item>
+               <item>
+                <widget class="QCheckBox" name="disableMslFastMath">
+                 <property name="text">
+                  <string>Disable MSL Fast Math</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QCheckBox" name="softwareVkSemaphore">
+                 <property name="text">
+                  <string>Software VkSemaphore</string>
+                 </property>
+                </widget>
+               </item>
               </layout>
              </widget>
             </item>
@@ -2403,6 +2498,24 @@
               <layout class="QVBoxLayout" name="gb_vksched_layout">
                <item>
                 <widget class="QComboBox" name="vulkansched"/>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="gb_rsx_fifo_accuracy">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Minimum">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="title">
+               <string>RSX FIFO Accuracy</string>
+              </property>
+              <layout class="QVBoxLayout" name="gb_rsx_fifo_accuracy_layout">
+               <item>
+                <widget class="QComboBox" name="FIFOAccuracy"/>
                </item>
               </layout>
              </widget>
@@ -2490,48 +2603,12 @@
                  </item>
                 </layout>
                </item>
-              </layout>
-             </widget>
-            </item>
-            <item>
-             <widget class="QGroupBox" name="gb_clockScale">
-              <property name="sizePolicy">
-               <sizepolicy hsizetype="Preferred" vsizetype="Minimum">
-                <horstretch>0</horstretch>
-                <verstretch>0</verstretch>
-               </sizepolicy>
-              </property>
-              <property name="title">
-               <string>Clocks Scale</string>
-              </property>
-              <layout class="QVBoxLayout" name="gb_clockScale_layout">
                <item>
-                <widget class="QSlider" name="clockScale">
-                 <property name="orientation">
-                  <enum>Qt::Horizontal</enum>
+                <widget class="QCheckBox" name="vblankNTSCFixup">
+                 <property name="text">
+                  <string>VBlank NTSC Fixup</string>
                  </property>
                 </widget>
-               </item>
-               <item>
-                <layout class="QHBoxLayout" name="clockScaleLayout" stretch="1,0">
-                 <item>
-                  <widget class="QLabel" name="clockScaleText">
-                   <property name="text">
-                    <string>100%</string>
-                   </property>
-                   <property name="alignment">
-                    <set>Qt::AlignCenter</set>
-                   </property>
-                  </widget>
-                 </item>
-                 <item>
-                  <widget class="QPushButton" name="clockScaleReset">
-                   <property name="text">
-                    <string>Reset</string>
-                   </property>
-                  </widget>
-                 </item>
-                </layout>
                </item>
               </layout>
              </widget>
@@ -3779,6 +3856,13 @@
               </widget>
              </item>
              <item>
+              <widget class="QCheckBox" name="disableVideoOutput">
+               <property name="text">
+                <string>Disable Video Output</string>
+               </property>
+              </widget>
+             </item>
+             <item>
               <widget class="QCheckBox" name="forceCpuBlitEmulation">
                <property name="text">
                 <string>Force CPU blit emulation</string>
@@ -3955,18 +4039,6 @@
                <layout class="QVBoxLayout" name="vbl_num_ppu_threads">
                 <item>
                  <widget class="QComboBox" name="combo_num_ppu_threads"/>
-                </item>
-               </layout>
-              </widget>
-             </item>
-             <item>
-              <widget class="QGroupBox" name="gb_metalsemaphore">
-               <property name="title">
-                <string>Metal Semaphore</string>
-               </property>
-               <layout class="QVBoxLayout" name="gb_metalsemaphore_layout">
-                <item>
-                 <widget class="QComboBox" name="metalsemaphore"/>
                 </item>
                </layout>
               </widget>

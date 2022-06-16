@@ -1,6 +1,7 @@
 #ifdef LLVM_AVAILABLE
 
 #include "Emu/system_config.h"
+#include "Emu/Cell/Common.h"
 #include "PPUTranslator.h"
 #include "PPUThread.h"
 
@@ -196,7 +197,7 @@ Function* PPUTranslator::Translate(const ppu_function& info)
 
 		// Create tail call to the check function
 		m_ir->SetInsertPoint(vcheck);
-		Call(GetType<void>(), "__check", m_thread, GetAddr())->setTailCallKind(llvm::CallInst::TCK_Tail);
+		Call(GetType<void>(), "__check", m_thread, GetAddr());
 		m_ir->CreateRetVoid();
 	}
 	else
@@ -932,31 +933,13 @@ void PPUTranslator::VCTUXS(ppu_opcode_t op)
 void PPUTranslator::VEXPTEFP(ppu_opcode_t op)
 {
 	const auto b = get_vr<f32[4]>(op.vb);
-	const auto x0 = eval(fmax(fmin(b, fsplat<f32[4]>(127.4999961f)), fsplat<f32[4]>(-127.4999961f)));
-	const auto x1 = eval(x0 + fsplat<f32[4]>(0.5f));
-	const auto x2 = eval(llvm_calli<s32[4], decltype(x1)>{"llvm.x86.sse2.cvtps2dq", {x1}} - noncast<s32[4]>(zext<u32[4]>(fcmp_ord(x1 <= fsplat<f32[4]>(0)))));
-	const auto x3 = eval(x0 - fpcast<f32[4]>(x2));
-	const auto x4 = eval(x3 * x3);
-	const auto x5 = eval(x3 * fmuladd(fmuladd(x4, fsplat<f32[4]>(0.023093347705f), fsplat<f32[4]>(20.20206567f)), x4, fsplat<f32[4]>(1513.906801f)));
-	const auto x6 = eval(x5 * fre(fmuladd(x4, fsplat<f32[4]>(233.1842117f), fsplat<f32[4]>(4368.211667f)) - x5));
-	set_vr(op.vd, (x6 + x6 + fsplat<f32[4]>(1.0f)) * bitcast<f32[4]>((x2 + 127) << 23));
+	set_vr(op.vd, vec_handle_result(llvm_calli<f32[4], decltype(b)>{"llvm.exp2.v4f32", {b}}));
 }
 
 void PPUTranslator::VLOGEFP(ppu_opcode_t op)
 {
 	const auto b = get_vr<f32[4]>(op.vb);
-	const auto _1 = fsplat<f32[4]>(1.0f);
-	const auto _c = fsplat<f32[4]>(1.442695040f);
-	const auto x0 = eval(fmax(b, bitcast<f32[4]>(splat<s32[4]>(0x00800000))));
-	const auto x1 = eval(bitcast<f32[4]>((bitcast<u32[4]>(x0) & 0x807fffff) | bitcast<u32[4]>(_1)));
-	const auto x2 = eval(fre(x1 + _1));
-	const auto x3 = eval((x1 - _1) * x2);
-	const auto x4 = eval(x3 + x3);
-	const auto x5 = eval(x4 * x4);
-	const auto x6 = eval(fmuladd(fmuladd(x5, fsplat<f32[4]>(-0.7895802789f), fsplat<f32[4]>(16.38666457f)), x5, fsplat<f32[4]>(-64.1409953f)));
-	const auto x7 = eval(fre(fmuladd(fmuladd(x5, fsplat<f32[4]>(-35.67227983f), fsplat<f32[4]>(312.0937664f)), x5, fsplat<f32[4]>(-769.6919436f))));
-	const auto x8 = eval(fpcast<f32[4]>(bitcast<s32[4]>((bitcast<u32[4]>(x0) >> 23) - 127)));
-	set_vr(op.vd, fmuladd(x5 * x6 * x7 * x4, _c, fmuladd(x4, _c, x8)));
+	set_vr(op.vd, vec_handle_result(llvm_calli<f32[4], decltype(b)>{"llvm.log2.v4f32", {b}}));
 }
 
 void PPUTranslator::VMADDFP(ppu_opcode_t op)
@@ -1965,13 +1948,13 @@ void PPUTranslator::SC(ppu_opcode_t op)
 
 		if (index < 1024)
 		{
-			Call(GetType<void>(), fmt::format("%s", ppu_syscall_code(index)), m_thread)->setTailCallKind(llvm::CallInst::TCK_Tail);
+			Call(GetType<void>(), fmt::format("%s", ppu_syscall_code(index)), m_thread);
 			m_ir->CreateRetVoid();
 			return;
 		}
 	}
 
-	Call(GetType<void>(), op.lev ? "__lv1call" : "__syscall", m_thread, num)->setTailCallKind(llvm::CallInst::TCK_Tail);
+	Call(GetType<void>(), op.lev ? "__lv1call" : "__syscall", m_thread, num);
 	m_ir->CreateRetVoid();
 }
 
@@ -2523,7 +2506,7 @@ void PPUTranslator::LWARX(ppu_opcode_t op)
 	{
 		RegStore(Trunc(GetAddr()), m_cia);
 		FlushRegisters();
-		Call(GetType<void>(), "__resinterp", m_thread)->setTailCallKind(llvm::CallInst::TCK_Tail);
+		Call(GetType<void>(), "__resinterp", m_thread);
 		m_ir->CreateRetVoid();
 		return;
 	}
@@ -2665,7 +2648,7 @@ void PPUTranslator::LDARX(ppu_opcode_t op)
 	{
 		RegStore(Trunc(GetAddr()), m_cia);
 		FlushRegisters();
-		Call(GetType<void>(), "__resinterp", m_thread)->setTailCallKind(llvm::CallInst::TCK_Tail);
+		Call(GetType<void>(), "__resinterp", m_thread);
 		m_ir->CreateRetVoid();
 		return;
 	}
@@ -4008,9 +3991,22 @@ void PPUTranslator::FSQRTS(ppu_opcode_t op)
 
 void PPUTranslator::FRES(ppu_opcode_t op)
 {
-	const auto b = GetFpr(op.frb, 32);
-	const auto result = m_ir->CreateFDiv(ConstantFP::get(GetType<f32>(), 1.0), b);
-	SetFpr(op.frd, result);
+	if (!m_fres_table)
+	{
+		m_fres_table = new GlobalVariable(*m_module, ArrayType::get(GetType<u32>(), 128), true, GlobalValue::PrivateLinkage, ConstantDataArray::get(m_context, ppu_fres_mantissas));
+	}
+
+	const auto a = GetFpr(op.frb);
+	const auto b = bitcast<u64>(a);
+	const auto n = m_ir->CreateFCmpUNO(a, a); // test for NaN
+	const auto e = m_ir->CreateAnd(m_ir->CreateLShr(b, 52), 0x7ff); // double exp
+	const auto i = m_ir->CreateAnd(m_ir->CreateLShr(b, 45), 0x7f); // mantissa LUT index
+	const auto m = m_ir->CreateShl(ZExt(m_ir->CreateLoad(m_ir->CreateGEP(m_fres_table, {m_ir->getInt64(0), i}))), 29);
+	const auto c = m_ir->CreateICmpUGE(e, m_ir->getInt64(0x3ff + 0x80)); // test for INF
+	const auto x = m_ir->CreateShl(m_ir->CreateSub(m_ir->getInt64(0x7ff - 2), e), 52);
+	const auto s = m_ir->CreateSelect(c, m_ir->getInt64(0), m_ir->CreateOr(x, m));
+	const auto r = bitcast<f64>(m_ir->CreateSelect(n, m_ir->CreateOr(b, 0x8'0000'0000'0000), m_ir->CreateOr(s, m_ir->CreateAnd(b, 0x8000'0000'0000'0000))));
+	SetFpr(op.frd, m_ir->CreateFPTrunc(r, GetType<f32>()));
 
 	//m_ir->CreateStore(GetUndef<bool>(), m_fpscr_fr);
 	//m_ir->CreateStore(GetUndef<bool>(), m_fpscr_fi);
@@ -4019,7 +4015,7 @@ void PPUTranslator::FRES(ppu_opcode_t op)
 	//SetFPSCRException(m_fpscr_ux, Call(GetType<bool>(), m_pure_attr, "__fres_get_ux", b));
 	//SetFPSCRException(m_fpscr_zx, Call(GetType<bool>(), m_pure_attr, "__fres_get_zx", b));
 	//SetFPSCRException(m_fpscr_vxsnan, Call(GetType<bool>(), m_pure_attr, "__fres_get_vxsnan", b));
-	SetFPRF(result, op.rc != 0);
+	SetFPRF(r, op.rc != 0);
 }
 
 void PPUTranslator::FMULS(ppu_opcode_t op)
@@ -4250,7 +4246,11 @@ void PPUTranslator::FCTIW(ppu_opcode_t op)
 	const auto xormask = m_ir->CreateSExt(m_ir->CreateFCmpOGE(b, ConstantFP::get(GetType<f64>(), std::exp2l(31.))), GetType<s32>());
 
 	// fix result saturation (0x80000000 -> 0x7fffffff)
+#if defined(ARCH_X64)
 	SetFpr(op.frd, m_ir->CreateXor(xormask, Call(GetType<s32>(), "llvm.x86.sse2.cvtsd2si", m_ir->CreateInsertElement(GetUndef<f64[2]>(), b, u64{0}))));
+#elif defined(ARCH_ARM64)
+	SetFpr(op.frd, m_ir->CreateXor(xormask, Call(GetType<s32>(), "llvm.aarch64.neon.fcvtns.i32.f64", b)));
+#endif
 
 	//SetFPSCR_FR(Call(GetType<bool>(), m_pure_attr, "__fctiw_get_fr", b));
 	//SetFPSCR_FI(Call(GetType<bool>(), m_pure_attr, "__fctiw_get_fi", b));
@@ -4266,7 +4266,11 @@ void PPUTranslator::FCTIWZ(ppu_opcode_t op)
 	const auto xormask = m_ir->CreateSExt(m_ir->CreateFCmpOGE(b, ConstantFP::get(GetType<f64>(), std::exp2l(31.))), GetType<s32>());
 
 	// fix result saturation (0x80000000 -> 0x7fffffff)
+#if defined(ARCH_X64)
 	SetFpr(op.frd, m_ir->CreateXor(xormask, Call(GetType<s32>(), "llvm.x86.sse2.cvttsd2si", m_ir->CreateInsertElement(GetUndef<f64[2]>(), b, u64{0}))));
+#elif defined(ARCH_ARM64)
+	SetFpr(op.frd, m_ir->CreateXor(xormask, Call(GetType<s32>(), "llvm.aarch64.neon.fcvtzs.i32.f64", b)));
+#endif
 }
 
 void PPUTranslator::FDIV(ppu_opcode_t op)
@@ -4362,8 +4366,14 @@ void PPUTranslator::FMUL(ppu_opcode_t op)
 
 void PPUTranslator::FRSQRTE(ppu_opcode_t op)
 {
-	const auto b = GetFpr(op.frb, 32);
-	const auto result = m_ir->CreateFDiv(ConstantFP::get(GetType<f32>(), 1.0), Call(GetType<f32>(), "llvm.sqrt.f32", b));
+	if (!m_frsqrte_table)
+	{
+		m_frsqrte_table = new GlobalVariable(*m_module, ArrayType::get(GetType<u32>(), 0x8000), true, GlobalValue::PrivateLinkage, ConstantDataArray::get(m_context, ppu_frqrte_lut.data));
+	}
+
+	const auto b = m_ir->CreateBitCast(GetFpr(op.frb), GetType<u64>());
+	const auto v = m_ir->CreateLoad(m_ir->CreateGEP(m_frsqrte_table, {m_ir->getInt64(0), m_ir->CreateLShr(b, 49)}));
+	const auto result = m_ir->CreateBitCast(m_ir->CreateShl(ZExt(v), 32), GetType<f64>());
 	SetFpr(op.frd, result);
 
 	//m_ir->CreateStore(GetUndef<bool>(), m_fpscr_fr);
@@ -4536,7 +4546,12 @@ void PPUTranslator::FCTID(ppu_opcode_t op)
 	const auto xormask = m_ir->CreateSExt(m_ir->CreateFCmpOGE(b, ConstantFP::get(GetType<f64>(), std::exp2l(63.))), GetType<s64>());
 
 	// fix result saturation (0x8000000000000000 -> 0x7fffffffffffffff)
+#if defined(ARCH_X64)
 	SetFpr(op.frd, m_ir->CreateXor(xormask, Call(GetType<s64>(), "llvm.x86.sse2.cvtsd2si64", m_ir->CreateInsertElement(GetUndef<f64[2]>(), b, u64{0}))));
+#elif defined(ARCH_ARM64)
+	SetFpr(op.frd, m_ir->CreateXor(xormask, Call(GetType<s64>(), "llvm.aarch64.neon.fcvtns.i64.f64", b)));
+#endif
+
 
 	//SetFPSCR_FR(Call(GetType<bool>(), m_pure_attr, "__fctid_get_fr", b));
 	//SetFPSCR_FI(Call(GetType<bool>(), m_pure_attr, "__fctid_get_fi", b));
@@ -4552,7 +4567,11 @@ void PPUTranslator::FCTIDZ(ppu_opcode_t op)
 	const auto xormask = m_ir->CreateSExt(m_ir->CreateFCmpOGE(b, ConstantFP::get(GetType<f64>(), std::exp2l(63.))), GetType<s64>());
 
 	// fix result saturation (0x8000000000000000 -> 0x7fffffffffffffff)
+#if defined(ARCH_X64)
 	SetFpr(op.frd, m_ir->CreateXor(xormask, Call(GetType<s64>(), "llvm.x86.sse2.cvttsd2si64", m_ir->CreateInsertElement(GetUndef<f64[2]>(), b, u64{0}))));
+#elif defined(ARCH_ARM64)
+	SetFpr(op.frd, m_ir->CreateXor(xormask, Call(GetType<s64>(), "llvm.aarch64.neon.fcvtzs.i64.f64", b)));
+#endif
 }
 
 void PPUTranslator::FCFID(ppu_opcode_t op)
@@ -4569,7 +4588,7 @@ void PPUTranslator::FCFID(ppu_opcode_t op)
 void PPUTranslator::UNK(ppu_opcode_t op)
 {
 	FlushRegisters();
-	Call(GetType<void>(), "__error", m_thread, GetAddr(), m_ir->getInt32(op.opcode))->setTailCallKind(llvm::CallInst::TCK_Tail);
+	Call(GetType<void>(), "__error", m_thread, GetAddr(), m_ir->getInt32(op.opcode));
 	m_ir->CreateRetVoid();
 }
 
@@ -4830,7 +4849,7 @@ Value* PPUTranslator::CheckTrapCondition(u32 to, Value* left, Value* right)
 
 void PPUTranslator::Trap()
 {
-	Call(GetType<void>(), "__trap", m_thread, GetAddr())->setTailCallKind(llvm::CallInst::TCK_Tail);
+	Call(GetType<void>(), "__trap", m_thread, GetAddr());
 	m_ir->CreateRetVoid();
 }
 

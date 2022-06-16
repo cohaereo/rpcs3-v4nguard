@@ -78,7 +78,7 @@ void sys_spu_image::load(const fs::file& stream)
 
 	for (const auto& shdr : obj.shdrs)
 	{
-		spu_log.notice("** Section: sh_type=0x%x, addr=0x%llx, size=0x%llx, flags=0x%x", shdr.sh_type, shdr.sh_addr, shdr.sh_size, shdr.sh_flags);
+		spu_log.notice("** Section: sh_type=0x%x, addr=0x%llx, size=0x%llx, flags=0x%x", std::bit_cast<u32>(shdr.sh_type), shdr.sh_addr, shdr.sh_size, shdr._sh_flags);
 	}
 
 	for (const auto& prog : obj.progs)
@@ -780,7 +780,7 @@ error_code sys_spu_thread_group_create(ppu_thread& ppu, vm::ptr<u32> id, u32 num
 
 	if (!limits.check(use_scheduler ? limits_data{.controllable = num} : limits_data{.physical = num}))
 	{
-		ct->used -= mem_size;
+		ct->free(mem_size);
 		return CELL_EBUSY;
 	}
 
@@ -788,7 +788,7 @@ error_code sys_spu_thread_group_create(ppu_thread& ppu, vm::ptr<u32> id, u32 num
 
 	if (!group)
 	{
-		ct->used -= mem_size;
+		ct->free(mem_size);
 		return CELL_EAGAIN;
 	}
 
@@ -823,7 +823,7 @@ error_code sys_spu_thread_group_destroy(ppu_thread& ppu, u32 id)
 			return CELL_EBUSY;
 		}
 
-		group.ct->used -= group.mem_size;
+		group.ct->free(group.mem_size);
 		return {};
 	});
 
@@ -1138,6 +1138,7 @@ error_code sys_spu_thread_group_terminate(ppu_thread& ppu, u32 id, s32 value)
 		lv2_obj::sleep(ppu);
 		busy_wait(3000);
 		ppu.check_state();
+		ppu.state += cpu_flag::wait;
 	};
 
 	if (auto state = +group->run_state;

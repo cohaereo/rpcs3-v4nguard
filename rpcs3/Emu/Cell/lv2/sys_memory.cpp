@@ -83,7 +83,7 @@ error_code sys_memory_allocate(cpu_thread& cpu, u32 size, u64 flags, vm::ptr<u32
 		}
 	}
 
-	dct.used -= size;
+	dct.free(size);
 	return CELL_ENOMEM;
 }
 
@@ -154,7 +154,7 @@ error_code sys_memory_allocate_from_container(cpu_thread& cpu, u32 size, u32 cid
 		}
 	}
 
-	ct->used -= size;
+	ct->free(size);
 	return CELL_ENOMEM;
 }
 
@@ -172,7 +172,7 @@ error_code sys_memory_free(cpu_thread& cpu, u32 addr)
 	}
 
 	const auto size = (ensure(vm::dealloc(addr)));
-	reader_lock{id_manager::g_mutex}, ct->used -= size;
+	reader_lock{id_manager::g_mutex}, ct->free(size);
 	return CELL_OK;
 }
 
@@ -182,7 +182,7 @@ error_code sys_memory_get_page_attribute(cpu_thread& cpu, u32 addr, vm::ptr<sys_
 
 	sys_memory.trace("sys_memory_get_page_attribute(addr=0x%x, attr=*0x%x)", addr, attr);
 
-	vm::reader_lock rlock;
+	vm::writer_lock rlock;
 
 	if (!vm::check_addr(addr) || addr >= SPU_FAKE_BASE_ADDR)
 	{
@@ -277,7 +277,7 @@ error_code sys_memory_container_create(cpu_thread& cpu, vm::ptr<u32> cid, u32 si
 		return CELL_OK;
 	}
 
-	dct.used -= size;
+	dct.free(size);
 	return CELL_EAGAIN;
 }
 
@@ -311,7 +311,7 @@ error_code sys_memory_container_destroy(cpu_thread& cpu, u32 cid)
 	}
 
 	// Return "physical memory" to the default container
-	g_fxo->get<lv2_memory_container>().used -= ct->size;
+	g_fxo->get<lv2_memory_container>().free(ct->size);
 
 	return CELL_OK;
 }

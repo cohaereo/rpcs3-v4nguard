@@ -1,14 +1,19 @@
 #include "stdafx.h"
 #include "sys_sync.h"
 #include "sys_fs.h"
+#include "sys_memory.h"
 
 #include "Emu/Cell/PPUModule.h"
 #include "Emu/Cell/PPUThread.h"
 #include "Crypto/unedat.h"
 #include "Emu/System.h"
 #include "Emu/VFS.h"
+#include "Emu/vfs_config.h"
 #include "Emu/IdManager.h"
+#include "Emu/RSX/Overlays/overlay_utils.h" // for ascii8_to_utf16
 #include "Utilities/StrUtil.h"
+
+#include <charconv>
 
 LOG_CHANNEL(sys_fs);
 
@@ -597,7 +602,7 @@ lv2_file::open_result_t lv2_file::open(std::string_view vpath, s32 flags, s32 mo
 	}
 
 	std::string path;
-	const std::string local_path = vfs::get(vpath, nullptr, &path);
+	std::string local_path = vfs::get(vpath, nullptr, &path);
 
 	const auto mp = lv2_fs_object::get_mp(vpath);
 
@@ -859,6 +864,22 @@ error_code sys_fs_close(ppu_thread& ppu, u32 fd)
 		if (!FD_state_log.empty())
 		{
 			sys_fs.warning("%s: %s", FD_state_log, *file);
+		}
+
+		// Free memory associated with fd if any
+		if (file->ct_id && file->ct_used)
+		{
+			auto& default_container = g_fxo->get<default_sys_fs_container>();
+			std::lock_guard lock(default_container.mutex);
+
+			if (auto ct = idm::get<lv2_memory_container>(file->ct_id))
+			{
+				ct->free(file->ct_used);
+				if (default_container.id == file->ct_id)
+				{
+					default_container.used -= file->ct_used;
+				}
+			}
 		}
 
 		// Ensure Host file handle won't be kept open after this syscall
@@ -1649,7 +1670,7 @@ error_code sys_fs_fcntl(ppu_thread& ppu, u32 fd, u32 op, vm::ptr<void> _arg, u32
 
 	case 0xc0000007: // cellFsArcadeHddSerialNumber
 	{
-		const auto arg = vm::static_ptr_cast<lv2_file_c000007>(_arg);
+		const auto arg = vm::static_ptr_cast<lv2_file_c0000007>(_arg);
 		// TODO populate arg-> unk1+2
 		arg->out_code = CELL_OK;
 		return CELL_OK;
@@ -1657,7 +1678,86 @@ error_code sys_fs_fcntl(ppu_thread& ppu, u32 fd, u32 op, vm::ptr<void> _arg, u32
 
 	case 0xc0000008: // cellFsSetDefaultContainer, cellFsSetIoBuffer, cellFsSetIoBufferFromDefaultContainer
 	{
-		break;
+		// Allocates memory from a container/default container to a specific fd or default IO processing
+		const auto arg          = vm::static_ptr_cast<lv2_file_c0000008>(_arg);
+		auto& default_container = g_fxo->get<default_sys_fs_container>();
+
+		std::lock_guard def_container_lock(default_container.mutex);
+
+		if (fd == 0xFFFFFFFF)
+		{
+			// No check on container is done when setting default container
+			default_container.id   = arg->size ? ::narrow<u32>(arg->container_id) : 0u;
+			default_container.cap  = arg->size;
+			default_container.used = 0;
+
+			arg->out_code = CELL_OK;
+			return CELL_OK;
+		}
+
+		auto file = idm::get<lv2_fs_object, lv2_file>(fd);
+		if (!file)
+		{
+			return CELL_EBADF;
+		}
+
+		if (auto ct = idm::get<lv2_memory_container>(file->ct_id))
+		{
+			ct->free(file->ct_used);
+			if (default_container.id == file->ct_id)
+			{
+				default_container.used -= file->ct_used;
+			}
+		}
+
+		file->ct_id   = 0;
+		file->ct_used = 0;
+
+		// Aligns on lower bound
+		u32 actual_size = arg->size - (arg->size % ((arg->page_type & CELL_FS_IO_BUFFER_PAGE_SIZE_64KB) ? 0x10000 : 0x100000));
+
+		if (!actual_size)
+		{
+			arg->out_code = CELL_OK;
+			return CELL_OK;
+		}
+
+		u32 new_container_id = arg->container_id == 0xFFFFFFFF ? default_container.id : ::narrow<u32>(arg->container_id);
+		if (default_container.id == new_container_id && (default_container.used + actual_size) > default_container.cap)
+		{
+			return CELL_ENOMEM;
+		}
+
+		const auto ct = idm::get<lv2_memory_container>(new_container_id, [&](lv2_memory_container& ct) -> CellError
+			{
+				if (!ct.take(actual_size))
+				{
+					return CELL_ENOMEM;
+				}
+
+				return {};
+			});
+
+		if (!ct)
+		{
+			return CELL_ESRCH;
+		}
+
+		if (ct.ret)
+		{
+			return ct.ret;
+		}
+
+		if (default_container.id == new_container_id)
+		{
+			default_container.used += actual_size;
+		}
+
+		file->ct_id   = new_container_id;
+		file->ct_used = actual_size;
+
+		arg->out_code = CELL_OK;
+		return CELL_OK;
 	}
 
 	case 0xc0000015: // USB Vid/Pid lookup - Used by arcade games on dev_usbXXX
@@ -1677,17 +1777,50 @@ error_code sys_fs_fcntl(ppu_thread& ppu, u32 fd, u32 op, vm::ptr<void> _arg, u32
 		}
 
 		std::string_view vpath{ arg->name.get_ptr(), arg->name_size };
+
+		// Trim trailing '\0'
+		if (auto trim_pos = vpath.find('\0'); trim_pos != vpath.npos)
+		{
+			vpath.remove_suffix(vpath.size() - trim_pos);
+		}
+
 		if (!vpath.starts_with("/dev_usb"sv))
 		{
 			arg->out_code = CELL_ENOTSUP;
 			break;
 		}
 
-		// TODO hook up to config for dev_usb
-		// arg->vendorID = 0x0000;
-		// arg->productID = 0x0000;
+		const cfg::device_info device = g_cfg_vfs.get_device(g_cfg_vfs.dev_usb, vpath);
 
+		if (device.path.empty())
+		{
+			arg->out_code = CELL_ENOTSUP;
+			break;
+		}
+
+		u16 vid{};
+		{
+			auto [ptr, err] = std::from_chars(device.vid.data(), device.vid.data() + device.vid.size(), vid, 16);
+			if (err != std::errc())
+			{
+				fmt::throw_exception("Failed to read hex string: %s", std::make_error_code(err).message());
+			}
+		}
+
+		u16 pid{};
+		{
+			auto [ptr, err] = std::from_chars(device.pid.data(), device.pid.data() + device.pid.size(), pid, 16);
+			if (err != std::errc())
+			{
+				fmt::throw_exception("Failed to read hex string: %s", std::make_error_code(err).message());
+			}
+		}
+
+		arg->vendorID = vid;
+		arg->productID = pid;
 		arg->out_code = CELL_OK;
+
+		sys_fs.trace("sys_fs_fcntl(0xc0000015): found device '%s' (vid=0x%x, pid=0x%x)", vpath, arg->vendorID, arg->productID);
 		return CELL_OK;
 	}
 
@@ -1698,7 +1831,8 @@ error_code sys_fs_fcntl(ppu_thread& ppu, u32 fd, u32 op, vm::ptr<void> _arg, u32
 
 	case 0xc000001a: // cellFsSetDiscReadRetrySetting, 5731DF45
 	{
-		break;
+		[[maybe_unused]] const auto arg = vm::static_ptr_cast<lv2_file_c000001a>(_arg);
+		return CELL_OK;
 	}
 
 	case 0xc000001c: // USB Vid/Pid/Serial lookup
@@ -1718,18 +1852,67 @@ error_code sys_fs_fcntl(ppu_thread& ppu, u32 fd, u32 op, vm::ptr<void> _arg, u32
 		}
 
 		std::string_view vpath{ arg->name.get_ptr(), arg->name_size };
+
+		// Trim trailing '\0'
+		if (auto trim_pos = vpath.find('\0'); trim_pos != vpath.npos)
+		{
+			vpath.remove_suffix(vpath.size() - trim_pos);
+		}
+
 		if (!vpath.starts_with("/dev_usb"sv))
 		{
 			arg->out_code = CELL_ENOTSUP;
 			break;
 		}
 
-		// TODO hook up to config for dev_usb
-		// arg->vendorID = 0x0000;
-		// arg->productID = 0x0000;
-		// arg->serial = "blabla"; // String needs to be encoded to utf-16 BE
+		const cfg::device_info device = g_cfg_vfs.get_device(g_cfg_vfs.dev_usb, vpath);
+
+		if (device.path.empty())
+		{
+			arg->out_code = CELL_ENOTSUP;
+			break;
+		}
+
+		u16 vid{};
+		{
+			auto [ptr, err] = std::from_chars(device.vid.data(), device.vid.data() + device.vid.size(), vid, 16);
+			if (err != std::errc())
+			{
+				fmt::throw_exception("Failed to read hex string: %s", std::make_error_code(err).message());
+			}
+		}
+
+		u16 pid{};
+		{
+			auto [ptr, err] = std::from_chars(device.pid.data(), device.pid.data() + device.pid.size(), pid, 16);
+			if (err != std::errc())
+			{
+				fmt::throw_exception("Failed to read hex string: %s", std::make_error_code(err).message());
+			}
+		}
+
+		arg->vendorID = vid;
+		arg->productID = pid;
+
+		// Serial needs to be encoded to utf-16 BE
+		const std::u16string serial = ascii8_to_utf16(device.serial);
+		ensure((serial.size() * sizeof(u16)) <= sizeof(arg->serial));
+
+		std::memset(arg->serial, 0, sizeof(arg->serial));
+
+		const auto write_byteswapped = [](const void* src, void* dst) -> void
+		{
+			*static_cast<u16*>(dst) = *static_cast<const be_t<u16>*>(src);
+		};
+
+		for (size_t i = 0; i < serial.size(); i++)
+		{
+			write_byteswapped(&serial[i], &arg->serial[i * 2]);
+		}
 
 		arg->out_code = CELL_OK;
+
+		sys_fs.trace("sys_fs_fcntl(0xc000001c): found device '%s' (vid=0x%x, pid=0x%x, serial=%s)", vpath, arg->vendorID, arg->productID, device.serial);
 		return CELL_OK;
 	}
 

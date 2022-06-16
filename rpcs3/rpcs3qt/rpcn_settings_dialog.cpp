@@ -2,7 +2,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
-#include <QRegExpValidator>
+#include <QRegularExpressionValidator>
 #include <QInputDialog>
 #include <QGroupBox>
 #include <QMenu>
@@ -17,26 +17,6 @@
 #include <wolfssl/openssl/evp.h>
 
 LOG_CHANNEL(rpcn_settings_log, "rpcn settings dlg");
-
-const QString rpcn_state_to_qstr(rpcn::rpcn_state state)
-{
-	switch (state)
-	{
-	case rpcn::rpcn_state::failure_no_failure: return QObject::tr("No Error");
-	case rpcn::rpcn_state::failure_input: return QObject::tr("Invalid Input");
-	case rpcn::rpcn_state::failure_wolfssl: return QObject::tr("WolfSSL Error");
-	case rpcn::rpcn_state::failure_resolve: return QObject::tr("Resolve Error");
-	case rpcn::rpcn_state::failure_connect: return QObject::tr("Connect Error");
-	case rpcn::rpcn_state::failure_id: return QObject::tr("Identification Error");
-	case rpcn::rpcn_state::failure_id_already_logged_in: return QObject::tr("Identification Error: User Already Logged In");
-	case rpcn::rpcn_state::failure_id_username: return QObject::tr("Identification Error: Invalid Username");
-	case rpcn::rpcn_state::failure_id_password: return QObject::tr("Identification Error: Invalid Password");
-	case rpcn::rpcn_state::failure_id_token: return QObject::tr("Identification Error: Invalid Token");
-	case rpcn::rpcn_state::failure_protocol: return QObject::tr("Protocol Version Error");
-	case rpcn::rpcn_state::failure_other: return QObject::tr("Unknown Error");
-	default: return QObject::tr("Unhandled rpcn state!");
-	}
-}
 
 bool validate_rpcn_username(const std::string& input)
 {
@@ -101,7 +81,7 @@ rpcn_account_dialog::rpcn_account_dialog(QWidget* parent)
 	QLabel* label_npid = new QLabel(tr("NPID (username):"));
 	m_edit_npid        = new QLineEdit();
 	m_edit_npid->setMaxLength(16);
-	m_edit_npid->setValidator(new QRegExpValidator(QRegExp("^[a-zA-Z0-9_\\-]*$"), this));
+	m_edit_npid->setValidator(new QRegularExpressionValidator(QRegularExpression("^[a-zA-Z0-9_\\-]*$"), this));
 	QLabel* label_pass        = new QLabel(tr("Password:"));
 	QPushButton* btn_chg_pass = new QPushButton(tr("Set Password"));
 	QLabel* label_token       = new QLabel(tr("Token:"));
@@ -229,7 +209,7 @@ void rpcn_account_dialog::create_account()
 		return;
 
 	QString email;
-	const QRegExpValidator simple_email_validator(QRegExp("^[a-zA-Z0-9.!#$%&’*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\\.[a-zA-Z0-9-]+)*$"));
+	const QRegularExpressionValidator simple_email_validator(QRegularExpression("^[a-zA-Z0-9.!#$%&’*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\\.[a-zA-Z0-9-]+)*$"));
 
 	while (true)
 	{
@@ -258,7 +238,7 @@ void rpcn_account_dialog::create_account()
 
 	if (auto result = rpcn->wait_for_connection(); result != rpcn::rpcn_state::failure_no_failure)
 	{
-		const QString error_message = tr("Failed to connect to RPCN server:\n%0").arg(rpcn_state_to_qstr(result));
+		const QString error_message = tr("Failed to connect to RPCN server:\n%0").arg(QString::fromStdString(rpcn::rpcn_state_to_string(result)));
 		QMessageBox::critical(this, tr("Error Connecting"), error_message, QMessageBox::Ok);
 		return;
 	}
@@ -293,7 +273,7 @@ void rpcn_account_dialog::resend_token()
 
 	if (auto result = rpcn->wait_for_connection(); result != rpcn::rpcn_state::failure_no_failure)
 	{
-		const QString error_message = tr("Failed to connect to RPCN server:\n%0").arg(rpcn_state_to_qstr(result));
+		const QString error_message = tr("Failed to connect to RPCN server:\n%0").arg(QString::fromStdString(rpcn::rpcn_state_to_string(result)));
 		QMessageBox::critical(this, tr("Error Connecting"), error_message, QMessageBox::Ok);
 		return;
 	}
@@ -436,13 +416,13 @@ rpcn_friends_dialog::rpcn_friends_dialog(QWidget* parent)
 
 	if (auto res = m_rpcn->wait_for_connection(); res != rpcn::rpcn_state::failure_no_failure)
 	{
-		const QString error_msg = tr("Failed to connect to RPCN:\n%0").arg(rpcn_state_to_qstr(res));
+		const QString error_msg = tr("Failed to connect to RPCN:\n%0").arg(QString::fromStdString(rpcn::rpcn_state_to_string(res)));
 		QMessageBox::warning(parent, tr("Error connecting to RPCN!"), error_msg, QMessageBox::Ok);
 		return;
 	}
 	if (auto res = m_rpcn->wait_for_authentified(); res != rpcn::rpcn_state::failure_no_failure)
 	{
-		const QString error_msg = tr("Failed to authentify to RPCN:\n%0").arg(rpcn_state_to_qstr(res));
+		const QString error_msg = tr("Failed to authentify to RPCN:\n%0").arg(QString::fromStdString(rpcn::rpcn_state_to_string(res)));
 		QMessageBox::warning(parent, tr("Error authentifying to RPCN!"), error_msg, QMessageBox::Ok);
 		return;
 	}

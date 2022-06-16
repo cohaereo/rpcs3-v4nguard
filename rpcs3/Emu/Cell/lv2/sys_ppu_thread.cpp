@@ -8,6 +8,7 @@
 #include "Emu/Cell/ErrorCodes.h"
 #include "Emu/Cell/PPUThread.h"
 #include "Emu/Cell/PPUCallback.h"
+#include "Emu/Cell/PPUOpcodes.h"
 #include "Emu/Memory/vm_locking.h"
 #include "sys_event.h"
 #include "sys_process.h"
@@ -35,7 +36,7 @@ struct ppu_thread_cleaner
 	ppu_thread_cleaner& operator=(const ppu_thread_cleaner&) = delete;
 };
 
-bool ppu_thread_exit(ppu_thread& ppu)
+void ppu_thread_exit(ppu_thread& ppu, ppu_opcode_t, be_t<u32>*, struct ppu_intrp_func*)
 {
 	ppu.state += cpu_flag::exit + cpu_flag::wait;
 
@@ -44,7 +45,7 @@ bool ppu_thread_exit(ppu_thread& ppu)
 
 	if (auto& dct = g_fxo->get<lv2_memory_container>(); !Emu.IsStopped())
 	{
-		dct.used -= ppu.stack_size;
+		dct.free(ppu.stack_size);
 	}
 
 	if (ppu.call_history.index)
@@ -53,8 +54,6 @@ bool ppu_thread_exit(ppu_thread& ppu)
 		ppu.call_history.index = 0;
 		ppu_log.notice("Calling history: %s", str);
 	}
-
-	return false;
 }
 
 void _sys_ppu_thread_exit(ppu_thread& ppu, u64 errorcode)
@@ -62,7 +61,13 @@ void _sys_ppu_thread_exit(ppu_thread& ppu, u64 errorcode)
 	ppu.state += cpu_flag::wait;
 
 	// Need to wait until the current writer finish
-	if (ppu.state & cpu_flag::memory) vm::g_mutex.lock_unlock();
+	if (ppu.state & cpu_flag::memory)
+	{
+		while (vm::g_range_lock)
+		{
+			busy_wait(200);
+		}
+	}
 
 	sys_ppu_thread.trace("_sys_ppu_thread_exit(errorcode=0x%llx)", errorcode);
 
@@ -111,7 +116,7 @@ void _sys_ppu_thread_exit(ppu_thread& ppu, u64 errorcode)
 		thread_ctrl::wait_on(ppu.joiner, ppu_join_status::zombie);
 	}
 
-	ppu_thread_exit(ppu);
+	ppu_thread_exit(ppu, {}, nullptr, nullptr);
 }
 
 s32 sys_ppu_thread_yield(ppu_thread& ppu)
@@ -413,7 +418,7 @@ error_code _sys_ppu_thread_create(ppu_thread& ppu, vm::ptr<u64> thread_id, vm::p
 
 	if (!stack_base)
 	{
-		dct.used -= stack_size;
+		dct.free(stack_size);
 		return CELL_ENOMEM;
 	}
 
@@ -442,7 +447,7 @@ error_code _sys_ppu_thread_create(ppu_thread& ppu, vm::ptr<u64> thread_id, vm::p
 	if (!tid)
 	{
 		vm::dealloc(stack_base);
-		dct.used -= stack_size;
+		dct.free(stack_size);
 		return CELL_EAGAIN;
 	}
 

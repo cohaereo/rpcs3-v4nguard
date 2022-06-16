@@ -43,6 +43,19 @@ struct cfg_root : cfg::node
 		cfg::_bool spu_accurate_dma{ this, "Accurate SPU DMA", false };
 		cfg::_bool accurate_cache_line_stores{ this, "Accurate Cache Line Stores", false };
 		cfg::_bool rsx_accurate_res_access{this, "Accurate RSX reservation access", false, true};
+
+		struct fifo_setting : public cfg::_enum<rsx_fifo_mode>
+		{
+			using _enum = cfg::_enum<rsx_fifo_mode>;
+			using _enum::_enum;
+
+			explicit operator bool() const
+			{
+				return get() != rsx_fifo_mode::fast;
+			}
+		};
+
+		fifo_setting rsx_fifo_accuracy{this, "RSX FIFO Accuracy", rsx_fifo_mode::fast };
 		cfg::_bool spu_verification{ this, "SPU Verification", true }; // Should be enabled
 		cfg::_bool spu_cache{ this, "SPU Cache", true };
 		cfg::_bool spu_prof{ this, "SPU Profiler", false };
@@ -94,6 +107,7 @@ struct cfg_root : cfg::node
 
 		cfg::_bool limit_cache_size{ this, "Limit disk cache size", false };
 		cfg::_int<0, 10240> cache_max_size{ this, "Disk cache maximum size (MB)", 5120 };
+		cfg::_bool empty_hdd0_tmp{ this, "Empty /dev_hdd0/tmp/", true };
 
 	} vfs{ this };
 
@@ -127,6 +141,7 @@ struct cfg_root : cfg::node
 		cfg::_bool force_high_precision_z_buffer{ this, "Force High Precision Z buffer" };
 		cfg::_bool strict_rendering_mode{ this, "Strict Rendering Mode" };
 		cfg::_bool disable_zcull_queries{ this, "Disable ZCull Occlusion Queries", false, true };
+		cfg::_bool disable_video_output{ this, "Disable Video Output", false, true };
 		cfg::_bool disable_vertex_cache{ this, "Disable Vertex Cache", false };
 		cfg::_bool disable_FIFO_reordering{ this, "Disable FIFO Reordering", false };
 		cfg::_bool frame_skip_enabled{ this, "Enable Frame Skip", false, true };
@@ -158,6 +173,8 @@ struct cfg_root : cfg::node
 		cfg::_bool vblank_ntsc{ this, "Vblank NTSC Fixup", false, true };
 		cfg::_bool decr_memory_layout{ this, "DECR memory layout", false}; // Force enable increased allowed main memory range as DECR console
 		cfg::_bool host_label_synchronization{ this, "Allow Host GPU Labels", false };
+		cfg::_bool disable_msl_fast_math{ this, "Disable MSL Fast Math", false };
+		cfg::_bool mvk_software_vksemaphore{ this, "Software VkSemaphore", false };
 
 		struct node_vk : cfg::node
 		{
@@ -166,12 +183,11 @@ struct cfg_root : cfg::node
 			cfg::string adapter{ this, "Adapter" };
 			cfg::_bool force_fifo{ this, "Force FIFO present mode" };
 			cfg::_bool force_primitive_restart{ this, "Force primitive restart flag" };
-			cfg::_bool force_disable_exclusive_fullscreen_mode{ this, "Force Disable Exclusive Fullscreen Mode" };
+			cfg::_bool force_disable_exclusive_fullscreen_mode{ this, "Force Disable Exclusive Fullscreen Mode", false };
 			cfg::_bool asynchronous_texture_streaming{ this, "Asynchronous Texture Streaming 2", false };
 			cfg::_bool fsr_upscaling{ this, "Enable FidelityFX Super Resolution Upscaling", false, true };
 			cfg::uint<0, 100> rcas_sharpening_intensity{ this, "FidelityFX CAS Sharpening Intensity", 50, true };
 			cfg::_enum<vk_gpu_scheduler_mode> asynchronous_scheduler{ this, "Asynchronous Queue Scheduler", vk_gpu_scheduler_mode::safe };
-			cfg::_enum<vk_metal_semaphore_mode> metal_semaphore{ this, "Metal Semaphore", vk_metal_semaphore_mode::mtlevent_preferred };
 
 		} vk{ this };
 
@@ -229,10 +245,12 @@ struct cfg_root : cfg::node
 		node_audio(cfg::node* _this) : cfg::node(_this, "Audio") {}
 
 		cfg::_enum<audio_renderer> renderer{ this, "Renderer", audio_renderer::cubeb, true };
-		cfg::_enum<audio_provider> provider{ this, "Audio provider", audio_provider::cell_audio, false };
+		cfg::_enum<audio_provider> provider{ this, "Audio Provider", audio_provider::cell_audio, false };
+		cfg::_enum<audio_avport> rsxaudio_port{ this, "RSXAudio Avport", audio_avport::hdmi_0, true };
 		cfg::_bool dump_to_file{ this, "Dump to file", false, true };
 		cfg::_bool convert_to_s16{ this, "Convert to 16 bit", false, true };
-		cfg::_enum<audio_downmix> audio_channel_downmix{ this, "Audio Channels", audio_downmix::downmix_to_stereo, true };
+		cfg::_enum<audio_format> format{ this, "Audio Format", audio_format::stereo, false };
+		cfg::uint<0, umax> formats{ this, "Audio Formats", static_cast<u32>(audio_format_flag::lpcm_2_48khz), false };
 		cfg::_int<0, 200> volume{ this, "Master Volume", 100, true };
 		cfg::_bool enable_buffering{ this, "Enable Buffering", true, true };
 		cfg::_int <4, 250> desired_buffer_duration{ this, "Desired Audio Buffer Duration", 100, true };

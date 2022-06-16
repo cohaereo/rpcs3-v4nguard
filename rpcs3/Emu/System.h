@@ -179,6 +179,7 @@ public:
 	std::vector<u128> klic;
 	std::string disc;
 	std::string hdd1;
+	std::function<void(u32)> init_mem_containers;
 
 	u32 m_boot_source_type = 0; // CELL_GAME_GAMETYPE_SYS
 
@@ -224,10 +225,7 @@ public:
 		return m_dir;
 	}
 
-	const std::string& GetSfoDir() const
-	{
-		return m_sfo_dir;
-	}
+	const std::string GetSfoDir(bool prefer_disc_sfo) const;
 
 	// String for GUI dialogs.
 	const std::string& GetUsr() const
@@ -293,6 +291,8 @@ public:
 };
 
 extern Emulator Emu;
+
+extern bool g_log_all_errors;
 
 extern bool g_use_rtm;
 extern u64 g_rtm_tx_limit1;

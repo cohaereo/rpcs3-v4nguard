@@ -52,6 +52,8 @@ LOG_CHANNEL(sys_log, "SYS");
 // Preallocate 32 MiB
 stx::manual_typemap<void, 0x20'00000, 128> g_fixed_typemap;
 
+bool g_log_all_errors = false;
+
 bool g_use_rtm = false;
 u64 g_rtm_tx_limit1 = 0;
 u64 g_rtm_tx_limit2 = 0;
@@ -62,12 +64,14 @@ atomic_t<u64> g_watchdog_hold_ctr{0};
 
 extern bool ppu_load_exec(const ppu_exec_object&);
 extern void spu_load_exec(const spu_exec_object&);
+extern void spu_load_rel_exec(const spu_rel_object&);
 extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<lv2_prx*>* loaded_prx);
 extern bool ppu_initialize(const ppu_module&, bool = false);
 extern void ppu_finalize(const ppu_module&);
 extern void ppu_unload_prx(const lv2_prx&);
 extern std::shared_ptr<lv2_prx> ppu_load_prx(const ppu_prx_object&, const std::string&, s64 = 0);
 extern std::pair<std::shared_ptr<lv2_overlay>, CellError> ppu_load_overlay(const ppu_exec_object&, const std::string& path, s64 = 0);
+extern bool ppu_load_rel_exec(const ppu_rel_object&);
 
 fs::file g_tty;
 atomic_t<s64> g_tty_size{0};
@@ -79,7 +83,7 @@ std::mutex g_tty_mutex;
 
 namespace atomic_wait
 {
-	extern void parse_hashtable(bool(*cb)(u64 id, u32 refs, u64 ptr, u32 stats));
+	extern void parse_hashtable(bool(*cb)(u64 id, u32 refs, u64 ptr, u32 max_coll));
 }
 
 template<>
@@ -160,20 +164,47 @@ void Emulator::Init(bool add_only)
 	// Mount all devices
 	const std::string emu_dir = rpcs3::utils::get_emu_dir();
 	const std::string elf_dir = fs::get_parent_dir(m_path);
+	const std::string dev_hdd0 = g_cfg_vfs.get(g_cfg_vfs.dev_hdd0, emu_dir);
+	const std::string dev_hdd1 = g_cfg_vfs.get(g_cfg_vfs.dev_hdd1, emu_dir);
+	const std::string dev_flsh = g_cfg_vfs.get_dev_flash();
+	const std::string dev_flsh2 = g_cfg_vfs.get_dev_flash2();
+	const std::string dev_flsh3 = g_cfg_vfs.get_dev_flash3();
 
-	vfs::mount("/dev_hdd0", g_cfg_vfs.get(g_cfg_vfs.dev_hdd0, emu_dir));
-	vfs::mount("/dev_flash", g_cfg_vfs.get_dev_flash());
-	vfs::mount("/dev_flash2", g_cfg_vfs.get_dev_flash2());
-	vfs::mount("/dev_flash3", g_cfg_vfs.get_dev_flash3());
-	vfs::mount("/dev_usb", g_cfg_vfs.get(g_cfg_vfs.dev_usb000, emu_dir));
-	vfs::mount("/dev_usb000", g_cfg_vfs.get(g_cfg_vfs.dev_usb000, emu_dir));
+	vfs::mount("/dev_hdd0", dev_hdd0);
+	vfs::mount("/dev_flash", dev_flsh);
+	vfs::mount("/dev_flash2", dev_flsh2);
+	vfs::mount("/dev_flash3", dev_flsh3);
 	vfs::mount("/app_home", g_cfg_vfs.app_home.to_string().empty() ? elf_dir + '/' : g_cfg_vfs.get(g_cfg_vfs.app_home, emu_dir));
+
+	std::string dev_usb;
+
+	for (const auto& [key, value] : g_cfg_vfs.dev_usb.get_map())
+	{
+		const cfg::device_info usb_info = g_cfg_vfs.get_device(g_cfg_vfs.dev_usb, key, emu_dir);
+
+		if (key.size() != 11 || !key.starts_with("/dev_usb00"sv) || key.back() < '0' || key.back() > '7')
+		{
+			sys_log.error("Trying to mount unsupported usb device: %s", key);
+			continue;
+		}
+
+		vfs::mount(key, usb_info.path);
+
+		if (key == "/dev_usb000"sv)
+		{
+			dev_usb = usb_info.path;
+		}
+	}
+
+	ensure(!dev_usb.empty());
 
 	if (!hdd1.empty())
 	{
 		vfs::mount("/dev_hdd1", hdd1);
 		sys_log.notice("Hdd1: %s", vfs::get("/dev_hdd1"));
 	}
+
+	const bool is_exitspawn = m_config_mode == cfg_mode::continuous;
 
 	// Load config file
 	if (m_config_mode == cfg_mode::config_override)
@@ -225,13 +256,6 @@ void Emulator::Init(bool add_only)
 	}
 
 	// Create directories (can be disabled if necessary)
-	const std::string dev_hdd0 = rpcs3::utils::get_hdd0_dir();
-	const std::string dev_hdd1 = g_cfg_vfs.get(g_cfg_vfs.dev_hdd1, emu_dir);
-	const std::string dev_usb = g_cfg_vfs.get(g_cfg_vfs.dev_usb000, emu_dir);
-	const std::string dev_flsh = g_cfg_vfs.get_dev_flash();
-	const std::string dev_flsh2 = g_cfg_vfs.get_dev_flash2();
-	const std::string dev_flsh3 = g_cfg_vfs.get_dev_flash3();
-
 	auto make_path_verbose = [](const std::string& path)
 	{
 		if (!fs::create_path(path))
@@ -252,8 +276,6 @@ void Emulator::Init(bool add_only)
 		make_path_verbose(dev_flsh3);
 		make_path_verbose(dev_usb);
 		make_path_verbose(dev_hdd0 + "game/");
-		make_path_verbose(dev_hdd0 + "game/TEST12345/");
-		make_path_verbose(dev_hdd0 + "game/TEST12345/USRDIR/");
 		make_path_verbose(dev_hdd0 + reinterpret_cast<const char*>(u8"game/＄locks/"));
 		make_path_verbose(dev_hdd0 + "home/");
 		make_path_verbose(dev_hdd0 + "home/" + m_usr + "/");
@@ -323,6 +345,12 @@ void Emulator::Init(bool add_only)
 		}
 	}
 
+	if (is_exitspawn)
+	{
+		// Actions not taken during exitspawn
+		return;
+	}
+
 	// Fixup savedata
 	for (const auto& entry : fs::dir(save_path))
 	{
@@ -357,7 +385,29 @@ void Emulator::Init(bool add_only)
 
 	// Limit cache size
 	if (g_cfg.vfs.limit_cache_size)
+	{
 		rpcs3::cache::limit_cache_size();
+	}
+
+	// Wipe clean VSH's temporary directory of choice
+	if (g_cfg.vfs.empty_hdd0_tmp && !fs::remove_all(dev_hdd0 + "tmp/", false, true))
+	{
+		sys_log.error("Could not clean /dev_hdd0/tmp/ (%s)", fs::g_tls_error);
+	}
+
+	// Remove temporary game data that would have been removed when cellGame has been properly shut
+	for (const auto& entry : fs::dir(dev_hdd0 + "game/"))
+	{
+		if (entry.name.starts_with("_GDATA_") && fs::is_dir(dev_hdd0 + "game/" + entry.name + "/USRDIR/"))
+		{
+			const std::string target = dev_hdd0 + "game/" + entry.name;
+
+			if (!fs::remove_all(target, true, true))
+			{
+				sys_log.error("Could not clean \"%s\" (%s)", target, fs::g_tls_error);
+			}
+		}
+	}
 }
 
 void Emulator::SetUsr(const std::string& user)
@@ -736,6 +786,16 @@ game_boot_result Emulator::Load(const std::string& title_id, bool add_only, bool
 						sys_log.fatal("Failed to apply custom config: %s.yml", m_path);
 					}
 				}
+			}
+
+			// Force audio provider
+			if (m_path.ends_with("vsh.self"sv))
+			{
+				g_cfg.audio.provider.set(audio_provider::rsxaudio);
+			}
+			else
+			{
+				g_cfg.audio.provider.set(audio_provider::cell_audio);
 			}
 		}
 
@@ -1338,7 +1398,9 @@ game_boot_result Emulator::Load(const std::string& title_id, bool add_only, bool
 
 		ppu_exec_object ppu_exec;
 		ppu_prx_object ppu_prx;
+		ppu_rel_object ppu_rel;
 		spu_exec_object spu_exec;
+		spu_rel_object spu_rel;
 
 		if (ppu_exec.open(elf_file) == elf_error::ok)
 		{
@@ -1447,7 +1509,7 @@ game_boot_result Emulator::Load(const std::string& title_id, bool add_only, bool
 		}
 		else if (ppu_prx.open(elf_file) == elf_error::ok)
 		{
-			// PPU PRX (experimental)
+			// PPU PRX
 			GetCallbacks().on_ready();
 			g_fxo->init(false);
 			ppu_load_prx(ppu_prx, m_path);
@@ -1455,10 +1517,26 @@ game_boot_result Emulator::Load(const std::string& title_id, bool add_only, bool
 		}
 		else if (spu_exec.open(elf_file) == elf_error::ok)
 		{
-			// SPU executable (experimental)
+			// SPU executable
 			GetCallbacks().on_ready();
 			g_fxo->init(false);
 			spu_load_exec(spu_exec);
+			Pause(true);
+		}
+		else if (spu_rel.open(elf_file) == elf_error::ok)
+		{
+			// SPU linker file
+			GetCallbacks().on_ready();
+			g_fxo->init(false);
+			spu_load_rel_exec(spu_rel);
+			Pause(true);
+		}
+		else if (ppu_rel.open(elf_file) == elf_error::ok)
+		{
+			// PPU linker file
+			GetCallbacks().on_ready();
+			g_fxo->init(false);
+			ppu_load_rel_exec(ppu_rel);
 			Pause(true);
 		}
 		else
@@ -1468,6 +1546,8 @@ game_boot_result Emulator::Load(const std::string& title_id, bool add_only, bool
 			sys_log.warning("** ppu_exec -> %s", ppu_exec.get_error());
 			sys_log.warning("** ppu_prx  -> %s", ppu_prx.get_error());
 			sys_log.warning("** spu_exec -> %s", spu_exec.get_error());
+			sys_log.warning("** spu_rel -> %s", spu_rel.get_error());
+			sys_log.warning("** ppu_rel -> %s", ppu_rel.get_error());
 
 			Kill(false);
 			return game_boot_result::invalid_file_or_folder;
@@ -1688,7 +1768,9 @@ void Emulator::Resume()
 	}
 }
 
-u32 sysutil_send_system_cmd(u64 status, u64 param);
+s32 sysutil_send_system_cmd(u64 status, u64 param);
+u64 get_sysutil_cb_manager_read_count();
+
 void process_qt_events();
 
 void Emulator::GracefulShutdown(bool allow_autoexit, bool async_op)
@@ -1705,6 +1787,8 @@ void Emulator::GracefulShutdown(bool allow_autoexit, bool async_op)
 		Resume();
 	}
 
+	const u64 read_counter = get_sysutil_cb_manager_read_count();
+
 	if (old_state == system_state::frozen || !sysutil_send_system_cmd(0x0101 /* CELL_SYSUTIL_REQUEST_EXITGAME */, 0))
 	{
 		// The callback has been rudely ignored, we have no other option but to force termination
@@ -1712,13 +1796,21 @@ void Emulator::GracefulShutdown(bool allow_autoexit, bool async_op)
 		return;
 	}
 
-	auto perform_kill = [allow_autoexit, this, info = ProcureCurrentEmulationCourseInformation()]()
+	auto perform_kill = [read_counter, allow_autoexit, this, info = ProcureCurrentEmulationCourseInformation()]()
 	{
-		for (u32 i = 0; i < 100; i++)
+		bool read_sysutil_signal = false;
+
+		for (u32 i = 100; i < 140; i++)
 		{
 			std::this_thread::sleep_for(50ms);
 			Resume(); // TODO: Prevent pausing by other threads while in this loop
 			process_qt_events(); // Is nullified when performed on non-main thread
+
+			if (!read_sysutil_signal && read_counter != get_sysutil_cb_manager_read_count())
+			{
+				i -= 100; // Grant 5 seconds (if signal is not read force kill after two second)
+				read_sysutil_signal = true;
+			}
 
 			if (static_cast<u64>(info) != m_stop_ctr)
 			{
@@ -1726,7 +1818,7 @@ void Emulator::GracefulShutdown(bool allow_autoexit, bool async_op)
 			}
 		}
 
-		// An inevitable attempt to terminate the *current* emulation course will be issued after 5s
+		// An inevitable attempt to terminate the *current* emulation course will be issued after 7s
 		CallFromMainThread([allow_autoexit, this]()
 		{
 			Kill(allow_autoexit);
@@ -1747,6 +1839,16 @@ void Emulator::Kill(bool allow_autoexit)
 {
 	if (m_state.exchange(system_state::stopped) == system_state::stopped)
 	{
+		// Ensure clean state
+		argv.clear();
+		envp.clear();
+		data.clear();
+		disc.clear();
+		klic.clear();
+		hdd1.clear();
+		init_mem_containers = nullptr;
+		m_config_path.clear();
+		m_config_mode = cfg_mode::custom;
 		return;
 	}
 
@@ -1890,6 +1992,7 @@ void Emulator::Kill(bool allow_autoexit)
 	disc.clear();
 	klic.clear();
 	hdd1.clear();
+	init_mem_containers = nullptr;
 	m_config_path.clear();
 	m_config_mode = cfg_mode::custom;
 
@@ -1976,6 +2079,13 @@ s32 error_code::error_report(s32 result, const char* fmt, const fmt_type_info* s
 		if (!fmt)
 		{
 			// Report and clean error state
+
+			if (g_log_all_errors) [[unlikely]]
+			{
+				g_tls_error_stats.clear();
+				return 0;
+			}
+
 			for (auto&& pair : g_tls_error_stats)
 			{
 				if (pair.second > 3)
@@ -1988,6 +2098,8 @@ s32 error_code::error_report(s32 result, const char* fmt, const fmt_type_info* s
 			return 0;
 		}
 	}
+
+	ensure(fmt);
 
 	logs::channel* channel = &sys_log;
 	const char* func = "Unknown function";
@@ -2003,14 +2115,27 @@ s32 error_code::error_report(s32 result, const char* fmt, const fmt_type_info* s
 	// Format log message (use preallocated buffer)
 	g_tls_error_str.clear();
 	fmt::append(g_tls_error_str, "'%s' failed with 0x%08x", func, result);
+
+	// Add spacer between error and fmt if necessary
+	if (fmt[0] != ' ')
+		g_tls_error_str += " : ";
+
 	fmt::raw_append(g_tls_error_str, fmt, sup, args);
 
 	// Update stats and check log threshold
-	const auto stat = ++g_tls_error_stats[g_tls_error_str];
 
-	if (stat <= 3)
+	if (g_log_all_errors) [[unlikely]]
 	{
-		channel->error("%s [%u]", g_tls_error_str, stat);
+		channel->error("%s", g_tls_error_str);
+	}
+	else
+	{
+		const auto stat = ++g_tls_error_stats[g_tls_error_str];
+
+		if (stat <= 3)
+		{
+			channel->error("%s [%u]", g_tls_error_str, stat);
+		}
 	}
 
 	return result;
@@ -2108,5 +2233,20 @@ const std::string& Emulator::GetFakeCat() const
 
 	return m_cat;
 };
+
+const std::string Emulator::GetSfoDir(bool prefer_disc_sfo) const
+{
+	if (prefer_disc_sfo)
+	{
+		const std::string sfo_dir = vfs::get("/dev_bdvd/PS3_GAME");
+
+		if (!sfo_dir.empty())
+		{
+			return sfo_dir;
+		}
+	}
+
+	return m_sfo_dir;
+}
 
 Emulator Emu;

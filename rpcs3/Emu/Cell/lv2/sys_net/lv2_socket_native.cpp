@@ -15,7 +15,15 @@ lv2_socket_native::lv2_socket_native(lv2_socket_family family, lv2_socket_type t
 
 lv2_socket_native::~lv2_socket_native()
 {
-	close();
+	std::lock_guard lock(mutex);
+	if (socket)
+	{
+#ifdef _WIN32
+		::closesocket(socket);
+#else
+		::close(socket);
+#endif
+	}
 }
 
 s32 lv2_socket_native::create_socket()
@@ -54,7 +62,7 @@ void lv2_socket_native::set_socket(socket_type socket, lv2_socket_family family,
 	set_non_blocking();
 }
 
-std::tuple<bool, s32, sys_net_sockaddr> lv2_socket_native::accept(bool is_lock)
+std::tuple<bool, s32, std::shared_ptr<lv2_socket>, sys_net_sockaddr> lv2_socket_native::accept(bool is_lock)
 {
 	std::unique_lock<shared_mutex> lock(mutex, std::defer_lock);
 
@@ -72,24 +80,18 @@ std::tuple<bool, s32, sys_net_sockaddr> lv2_socket_native::accept(bool is_lock)
 	{
 		auto newsock = std::make_shared<lv2_socket_native>(family, type, protocol);
 		newsock->set_socket(native_socket, family, type, protocol);
-		s32 id_ps3 = idm::import_existing<lv2_socket>(newsock);
-
-		if (id_ps3 == id_manager::id_traits<lv2_socket>::invalid)
-		{
-			return {true, -SYS_NET_EMFILE, {}};
-		}
 
 		sys_net_sockaddr ps3_addr = native_addr_to_sys_net_addr(native_addr);
 
-		return {true, id_ps3, ps3_addr};
+		return {true, 0, std::move(newsock), ps3_addr};
 	}
 
 	if (auto result = get_last_error(!so_nbio); result)
 	{
-		return {true, -result, {}};
+		return {true, -result, {}, {}};
 	}
 
-	return {false, {}, {}};
+	return {false, {}, {}, {}};
 }
 
 s32 lv2_socket_native::bind(const sys_net_sockaddr& addr, [[maybe_unused]] s32 ps3_id)
@@ -869,11 +871,11 @@ std::optional<s32> lv2_socket_native::sendto(s32 flags, const std::vector<u8>& b
 	{
 		const s32 ret_analyzer = dnshook.analyze_dns_packet(lv2_id, reinterpret_cast<const u8*>(buf.data()), buf.size());
 
-		// If we're not connected just never send the packet and pretend we did
+		// If we're offline return ENETDOWN for dns requests
 		auto& nph = g_fxo->get<named_thread<np::np_handler>>();
 		if (!nph.get_net_status())
 		{
-			return {::narrow<s32>(buf.size())};
+			return -SYS_NET_ENETDOWN;
 		}
 
 		// Check if the packet is intercepted

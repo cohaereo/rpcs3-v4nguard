@@ -65,6 +65,10 @@
 #include "util/simd.hpp"
 #include "util/sysinfo.hpp"
 
+#ifdef __APPLE__
+#include <libkern/OSCacheControl.h>
+#endif
+
 extern atomic_t<u64> g_watchdog_hold_ctr;
 
 // Should be of the same type
@@ -247,7 +251,104 @@ const auto ppu_gateway = build_function_asm<void(*)(ppu_thread*)>("ppu_gateway",
 
 	c.ret();
 #else
+	// See https://github.com/ghc/ghc/blob/master/rts/include/stg/MachRegs.h
+	// for GHC calling convention definitions on Aarch64
+	// and https://developer.arm.com/documentation/den0024/a/The-ABI-for-ARM-64-bit-Architecture/Register-use-in-the-AArch64-Procedure-Call-Standard/Parameters-in-general-purpose-registers
+	// for AArch64 calling convention
+
+	// Push callee saved registers to the stack
+	// We need to save x18-x30 = 13 x 8B each + 8 bytes for 16B alignment = 112B
+	c.sub(a64::sp, a64::sp, Imm(112));
+	c.stp(a64::x18, a64::x19, arm::Mem(a64::sp));
+	c.stp(a64::x20, a64::x21, arm::Mem(a64::sp, 16));
+	c.stp(a64::x22, a64::x23, arm::Mem(a64::sp, 32));
+	c.stp(a64::x24, a64::x25, arm::Mem(a64::sp, 48));
+	c.stp(a64::x26, a64::x27, arm::Mem(a64::sp, 64));
+	c.stp(a64::x28, a64::x29, arm::Mem(a64::sp, 80));
+	c.str(a64::x30, arm::Mem(a64::sp, 96));
+
+	// Save sp for native longjmp emulation
+	Label native_sp_offset = c.newLabel();
+	c.ldr(a64::x10, arm::Mem(native_sp_offset));
+	c.str(a64::sp, arm::Mem(args[0], a64::x10));
+
+	// Load REG_Base - use absolute jump target to bypass rel jmp range limits
+	Label exec_addr = c.newLabel();
+	c.ldr(a64::x19, arm::Mem(exec_addr));
+	c.ldr(a64::x19, arm::Mem(a64::x19));
+	// Load PPUThread struct base -> REG_Sp
+	const arm::GpX ppu_t_base = a64::x20;
+	c.mov(ppu_t_base, args[0]);
+	// Load PC
+	const arm::GpX pc = a64::x26;
+	Label cia_offset = c.newLabel();
+	const arm::GpX cia_addr_reg = a64::x11;
+	// Load offset value
+	c.ldr(cia_addr_reg, arm::Mem(cia_offset));
+	// Load cia
+	c.ldr(pc, arm::Mem(ppu_t_base, cia_addr_reg));
+	// Zero top 32 bits
+	c.mov(a64::w26, a64::w26);
+	// Multiply by 2 to index into ptr table
+	const arm::GpX index_shift = a64::x27;
+	c.mov(index_shift, Imm(2));
+	c.mul(pc, pc, index_shift);
+
+	// Load call target
+	const arm::GpX call_target = a64::x28;
+	c.ldr(call_target, arm::Mem(a64::x19, pc));
+	// Compute REG_Hp
+	const arm::GpX reg_hp = a64::x21;
+	c.mov(reg_hp, call_target);
+	c.lsr(reg_hp, reg_hp, 48);
+	c.lsl(reg_hp, reg_hp, 13);
+
+	// Zero top 16 bits of call target
+	c.lsl(call_target, call_target, Imm(16));
+	c.lsr(call_target, call_target, Imm(16));
+
+	// Load registers
+	Label base_addr = c.newLabel();
+	c.ldr(a64::x22, arm::Mem(base_addr));
+	c.ldr(a64::x22, arm::Mem(a64::x22));
+
+	Label gpr_addr_offset = c.newLabel();
+	const arm::GpX gpr_addr_reg = a64::x9;
+	c.ldr(gpr_addr_reg, arm::Mem(gpr_addr_offset));
+	c.add(gpr_addr_reg, gpr_addr_reg, ppu_t_base);
+	c.ldr(a64::x23, arm::Mem(gpr_addr_reg));
+	c.ldr(a64::x24, arm::Mem(gpr_addr_reg, 8));
+	c.ldr(a64::x25, arm::Mem(gpr_addr_reg, 16));
+
+	// Execute LLE call
+	c.blr(call_target);
+
+	// Restore stack ptr
+	c.ldr(a64::x10, arm::Mem(native_sp_offset));
+	c.ldr(a64::sp, arm::Mem(args[0], a64::x10));
+	// Restore registers from the stack
+	c.ldp(a64::x18, a64::x19, arm::Mem(a64::sp));
+	c.ldp(a64::x20, a64::x21, arm::Mem(a64::sp, 16));
+	c.ldp(a64::x22, a64::x23, arm::Mem(a64::sp, 32));
+	c.ldp(a64::x24, a64::x25, arm::Mem(a64::sp, 48));
+	c.ldp(a64::x26, a64::x27, arm::Mem(a64::sp, 64));
+	c.ldp(a64::x28, a64::x29, arm::Mem(a64::sp, 80));
+	c.ldr(a64::x30, arm::Mem(a64::sp, 96));
+	// Restore stack ptr
+	c.add(a64::sp, a64::sp, Imm(112));
+	// Return
 	c.ret(a64::x30);
+
+	c.bind(exec_addr);
+	c.embedUInt64(reinterpret_cast<u64>(&vm::g_exec_addr));
+	c.bind(base_addr);
+	c.embedUInt64(reinterpret_cast<u64>(&vm::g_base_addr));
+	c.bind(cia_offset);
+	c.embedUInt64(static_cast<u64>(::offset32(&ppu_thread::cia)));
+	c.bind(gpr_addr_offset);
+	c.embedUInt64(static_cast<u64>(::offset32(&ppu_thread::gpr)));
+	c.bind(native_sp_offset);
+	c.embedUInt64(static_cast<u64>(::offset32(&ppu_thread::saved_native_sp)));
 #endif
 });
 
@@ -772,7 +873,7 @@ extern bool ppu_patch(u32 addr, u32 value)
 		return false;
 	}
 
-	vm::reader_lock rlock;
+	vm::writer_lock rlock;
 
 	if (!vm::check_addr(addr))
 	{
@@ -848,7 +949,15 @@ std::string ppu_thread::dump_regs() const
 		// Fixup for syscall arguments
 		if (current_function && i >= 3 && i <= 10) reg = syscall_args[i - 3];
 
-		fmt::append(ret, "r%d%s: 0x%-8llx", i, i <= 9 ? " " : "", reg);
+		auto [is_const, const_value] = dis_asm.try_get_const_gpr_value(i, cia);
+
+		if (const_value != reg)
+		{
+			// Expectation of pretictable code path has not been met (such as a branch directly to the instruction)
+			is_const = false;
+		}
+
+		fmt::append(ret, "r%d%s%s 0x%-8llx", i, i <= 9 ? " " : "", is_const ? "©" : ":", reg);
 
 		constexpr u32 max_str_len = 32;
 		constexpr u32 hex_count = 8;
@@ -858,21 +967,27 @@ std::string ppu_thread::dump_regs() const
 			bool is_function = false;
 			u32 toc = 0;
 
-			if (const u32 reg_ptr = *vm::get_super_ptr<u32>(static_cast<u32>(reg));
-				vm::check_addr<max_str_len>(reg_ptr))
+			auto is_exec_code = [&](u32 addr)
 			{
-				if ((reg | reg_ptr) % 4 == 0 && vm::check_addr(reg_ptr, vm::page_executable))
+				return addr % 4 == 0 && vm::check_addr(addr, vm::page_executable) && g_ppu_itype.decode(*vm::get_super_ptr<u32>(addr)) != ppu_itype::UNK;
+			};
+
+			if (const u32 reg_ptr = *vm::get_super_ptr<u32>(static_cast<u32>(reg));
+				vm::check_addr<8>(reg_ptr) && !vm::check_addr(toc, vm::page_executable))
+			{
+				// Check executability and alignment
+				if (reg % 4 == 0 && is_exec_code(reg_ptr))
 				{
 					toc = *vm::get_super_ptr<u32>(static_cast<u32>(reg + 4));
 
-					if (toc % 4 == 0 && vm::check_addr(toc))
+					if (toc % 4 == 0 && (toc >> 29) == (reg_ptr >> 29) && vm::check_addr(toc) && !vm::check_addr(toc, vm::page_executable))
 					{
 						is_function = true;
 						reg = reg_ptr;
 					}
 				}
 			}
-			else if (reg % 4 == 0 && vm::check_addr(reg, vm::page_executable))
+			else if (is_exec_code(reg))
 			{
 				is_function = true;
 			}
@@ -918,7 +1033,15 @@ std::string ppu_thread::dump_regs() const
 
 	for (uint i = 0; i < 32; ++i)
 	{
-		fmt::append(ret, "f%d%s: %.6G\n", i, i <= 9 ? " " : "", fpr[i]);
+		const f64 r = fpr[i];
+
+		if (!std::bit_cast<u64>(r))
+		{
+			fmt::append(ret, "f%d%s: %-12.6G [%-18s] (f32=0x%x)\n", i, i <= 9 ? " " : "", r, "", std::bit_cast<u32>(f32(r)));
+			continue;
+		}
+
+		fmt::append(ret, "f%d%s: %-12.6G [0x%016x] (f32=0x%x)\n", i, i <= 9 ? " " : "", r, std::bit_cast<u64>(r), std::bit_cast<u32>(f32(r)));
 	}
 
 	for (uint i = 0; i < 32; ++i, ret += '\n')
@@ -956,7 +1079,7 @@ std::string ppu_thread::dump_regs() const
 	else
 		fmt::append(ret, "Reservation Addr: none");
 
-	fmt::append(ret, "Reservation Data (entire cache line):\n");
+	fmt::append(ret, "\nReservation Data (entire cache line):\n");
 
 	be_t<u32> data[32]{};
 	std::memcpy(data, rdata, sizeof(rdata)); // Show the data even if the reservation was lost inside the atomic loop
@@ -1230,6 +1353,9 @@ void ppu_thread::cpu_task()
 		}
 		case ppu_cmd::initialize:
 		{
+#ifdef __APPLE__
+			pthread_jit_write_protect_np(false);
+#endif
 			cmd_pop();
 
 			while (!g_fxo->get<rsx::thread>().is_inited && !is_stopped())
@@ -1244,6 +1370,15 @@ void ppu_thread::cpu_task()
 			// We don't want to open a cell dialog while a native progress dialog is still open.
 			thread_ctrl::wait_on<atomic_wait::op_ne>(g_progr_ptotal, 0);
 			g_fxo->get<progress_dialog_workaround>().skip_the_progress_dialog = true;
+
+#ifdef __APPLE__
+			pthread_jit_write_protect_np(true);
+#endif
+#ifdef ARCH_ARM64
+			// Flush all cache lines after potentially writing executable code
+			asm("ISB");
+			asm("DSB ISH");
+#endif
 
 			break;
 		}
@@ -1374,6 +1509,15 @@ ppu_thread::ppu_thread(const ppu_thread_params& param, std::string_view name, u3
 	{
 		call_history.data.resize(call_history_max_size);
 	}
+
+#ifdef __APPLE__
+	pthread_jit_write_protect_np(true);
+#endif
+#ifdef ARCH_ARM64
+	// Flush all cache lines after potentially writing executable code
+	asm("ISB");
+	asm("DSB ISH");
+#endif
 }
 
 ppu_thread::thread_name_t::operator std::string() const
@@ -1952,6 +2096,8 @@ const auto ppu_stcx_accurate_tx = build_function_asm<u64(*)(u32 raddr, u64 rtime
 #endif
 	c.ret();
 #else
+	// Unimplemented should fail.
+	c.brk(Imm(0x42));
 	c.ret(a64::x30);
 #endif
 });
@@ -2335,7 +2481,7 @@ extern void ppu_finalize(const ppu_module& info)
 		// Get PPU cache location
 		cache_path = fs::get_cache_dir() + "cache/";
 
-		const std::string dev_flash = vfs::get("/dev_flash/");
+		const std::string dev_flash = vfs::get("/dev_flash/sys/");
 
 		if (info.path.starts_with(dev_flash) || Emu.GetCat() == "1P")
 		{
@@ -2415,7 +2561,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<lv2_
 			std::string upper = fmt::to_upper(entry.name);
 
 			// Check .sprx filename
-			if (upper.ends_with(".SPRX"))
+			if (upper.ends_with(".SPRX") && entry.name != "libfs_utility_init.sprx"sv)
 			{
 				// Skip already loaded modules or HLEd ones
 				if (dir_queue[i] == firmware_sprx_path)
@@ -2530,6 +2676,9 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<lv2_
 
 	named_thread_group workers("SPRX Worker ", std::min<u32>(utils::get_thread_count(), ::size32(file_queue)), [&]
 	{
+#ifdef __APPLE__
+		pthread_jit_write_protect_np(false);
+#endif
 		// Set low priority
 		thread_ctrl::scoped_priority low_prio(-1);
 
@@ -2691,9 +2840,26 @@ extern void ppu_initialize()
 
 	std::vector<std::string> dir_queue;
 
-	if (compile_fw)
+	const std::string mount_point = vfs::get("/dev_flash/");
+
+	bool dev_flash_located = Emu.GetCat().back() != 'P' && Emu.IsPathInsideDir(Emu.GetBoot(), mount_point);
+
+	if (compile_fw || dev_flash_located)
 	{
-		const std::string firmware_sprx_path = vfs::get("/dev_flash/sys/external/");
+		if (dev_flash_located)
+		{
+			const std::string eseibrd = mount_point + "/vsh/module/eseibrd.sprx";
+
+			if (auto prx = ppu_load_prx(ppu_prx_object{decrypt_self(fs::file{eseibrd})}, eseibrd, 0))
+			{
+				// Check if cache exists for this infinitesimally small prx
+				dev_flash_located = ppu_initialize(*prx, true);
+				idm::remove<lv2_obj, lv2_prx>(idm::last_id());
+				ppu_unload_prx(*prx);
+			}
+		}
+
+		const std::string firmware_sprx_path = vfs::get(dev_flash_located ? "/dev_flash/"sv : "/dev_flash/sys/"sv);
 		dir_queue.emplace_back(firmware_sprx_path);
 	}
 
@@ -3187,6 +3353,9 @@ bool ppu_initialize(const ppu_module& info, bool check_only)
 			// Set low priority
 			thread_ctrl::scoped_priority low_prio(-1);
 
+#ifdef __APPLE__
+			pthread_jit_write_protect_np(false);
+#endif
 			for (u32 i = work_cv++; i < workload.size(); i = work_cv++, g_progr_pdone++)
 			{
 				if (Emu.IsStopped())
@@ -3248,6 +3417,9 @@ bool ppu_initialize(const ppu_module& info, bool check_only)
 	}
 
 	// Jit can be null if the loop doesn't ever enter.
+#ifdef __APPLE__
+	pthread_jit_write_protect_np(false);
+#endif
 	if (jit && !jit_mod.init)
 	{
 		jit->fin();
@@ -3306,7 +3478,12 @@ static void ppu_initialize2(jit_compiler& jit, const ppu_module& module_part, co
 	std::unique_ptr<Module> _module = std::make_unique<Module>(obj_name, jit.get_context());
 
 	// Initialize target
+#if defined(__APPLE__) && defined(ARCH_ARM64)
+	// Force target linux on macOS arm64 to bypass some 64-bit address space linking issues
+	_module->setTargetTriple(Triple::normalize(utils::c_llvm_default_triple));
+#else
 	_module->setTargetTriple(Triple::normalize(sys::getProcessTriple()));
+#endif
 	_module->setDataLayout(jit.get_engine().getTargetMachine()->createDataLayout());
 
 	// Initialize translator
