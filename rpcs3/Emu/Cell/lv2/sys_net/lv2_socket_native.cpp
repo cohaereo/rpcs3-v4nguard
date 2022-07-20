@@ -921,6 +921,35 @@ std::optional<s32> lv2_socket_native::sendmsg(s32 flags, const sys_net_msghdr& m
 		native_flags |= MSG_WAITALL;
 	}
 
+#ifdef _WIN32
+	u32 data_len{};
+	for (int i = 0; i < msg.msg_iovlen; i++)
+	{
+		data_len += msg.msg_iov[i].iov_len;
+	}
+
+	std::vector<u8> data(data_len);
+	u32 copy_pos{};
+	for (int i = 0; i < msg.msg_iovlen; i++)
+	{
+		::memcpy(&data[copy_pos], vm::_ptr<void>(msg.msg_iov[i].iov_base.addr()), msg.msg_iov[i].iov_len);
+		copy_pos += msg.msg_iov[i].iov_len;
+	}
+
+	native_result = ::send(socket, reinterpret_cast<const char*>(data.data()), data.size(), 0);
+
+	if (native_result >= 0)
+	{
+		return {native_result};
+	}
+
+	result = get_last_error(!so_nbio && (flags & SYS_NET_MSG_DONTWAIT) == 0);
+
+	if (result)
+	{
+		return {-result};
+	}
+#else
 	std::vector<iovec> vcs_copy(msg.msg_iovlen);
 	for(int i = 0; i < msg.msg_iovlen; i++)
 	{
@@ -933,22 +962,23 @@ std::optional<s32> lv2_socket_native::sendmsg(s32 flags, const sys_net_msghdr& m
 	converted_msg.msg_namelen = msg.msg_namelen.get(); // Good
 	converted_msg.msg_iov = vcs_copy.data(); // Good?
 	converted_msg.msg_iovlen = vcs_copy.size(); // Good
-	// converted_msg.msg_control = vm::_ptr<void>(msg.msg_control.addr());
-	// converted_msg.msg_controllen = msg.msg_controllen.get(); // Good
+	converted_msg.msg_control = vm::_ptr<void>(msg.msg_control.addr());
+	converted_msg.msg_controllen = msg.msg_controllen.get(); // Good
 	converted_msg.msg_flags = msg.msg_flags.get(); // Good
 
 	native_result = ::sendmsg(socket, &converted_msg, native_flags);
-
-	if (native_result >= 0)
-	{
-		return {native_result};
-	}
 
 	result = get_last_error(!so_nbio && (flags & SYS_NET_MSG_DONTWAIT) == 0);
 
 	if (result)
 	{
 		return {-result};
+	}
+#endif
+
+	if (native_result >= 0)
+	{
+		return {native_result};
 	}
 
 	// Note that this can only happen if the send buffer is full
