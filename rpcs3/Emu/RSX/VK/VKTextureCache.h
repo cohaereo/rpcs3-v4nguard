@@ -37,9 +37,9 @@ namespace vk
 
 		std::unique_ptr<vk::viewable_image> managed_texture = nullptr;
 
-		//DMA relevant data
+		// DMA relevant data
 		std::unique_ptr<vk::event> dma_fence;
-		vk::render_device* m_device = nullptr;
+		vk::render_device* m_device      = nullptr;
 		vk::viewable_image* vram_texture = nullptr;
 
 	public:
@@ -63,15 +63,15 @@ namespace vk
 			ensure(!exists() || !is_managed() || vram_texture == new_texture);
 			vram_texture = new_texture;
 
-			ensure(rsx_pitch);
+			// ensure(rsx_pitch);
 
-			width = w;
-			height = h;
-			this->depth = depth;
-			this->mipmaps = mipmaps;
+			width           = w;
+			height          = h;
+			this->depth     = depth;
+			this->mipmaps   = mipmaps;
 			this->rsx_pitch = rsx_pitch;
 
-			this->gcm_format = gcm_format;
+			this->gcm_format             = gcm_format;
 			this->pack_unpack_swap_bytes = pack_swap_bytes;
 
 			if (managed)
@@ -89,8 +89,8 @@ namespace vk
 				// Even if we are managing the same vram section, we cannot guarantee contents are static
 				// The create method is only invoked when a new managed session is required
 				release_dma_resources();
-				synchronized = false;
-				flushed = false;
+				synchronized   = false;
+				flushed        = false;
 				sync_timestamp = 0ull;
 			}
 
@@ -181,7 +181,7 @@ namespace vk
 
 		bool is_flushed() const
 		{
-			//This memory section was flushable, but a flush has already removed protection
+			// This memory section was flushable, but a flush has already removed protection
 			return flushed;
 		}
 
@@ -207,8 +207,8 @@ namespace vk
 			}
 
 			vk::image* locked_resource = vram_texture;
-			u32 transfer_width = width;
-			u32 transfer_height = height;
+			u32 transfer_width         = width;
+			u32 transfer_height        = height;
 			u32 transfer_x = 0, transfer_y = 0;
 
 			if (context == rsx::texture_upload_context::framebuffer_storage)
@@ -231,15 +231,15 @@ namespace vk
 				const auto filter = (target->aspect() == VK_IMAGE_ASPECT_COLOR_BIT) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
 
 				vk::copy_scaled_image(cmd, locked_resource, target,
-					{ 0, 0, static_cast<s32>(locked_resource->width()), static_cast<s32>(locked_resource->height()) },
-					{ 0, 0, static_cast<s32>(transfer_width), static_cast<s32>(transfer_height) },
+					{0, 0, static_cast<s32>(locked_resource->width()), static_cast<s32>(locked_resource->height())},
+					{0, 0, static_cast<s32>(transfer_width), static_cast<s32>(transfer_height)},
 					1, true, filter);
 
 				target->change_layout(cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 			}
 
 			const auto internal_bpp = vk::get_format_texel_width(vram_texture->format());
-			const auto valid_range = get_confirmed_range();
+			const auto valid_range  = get_confirmed_range();
 
 			if (const auto section_range = get_section_range(); section_range != valid_range)
 			{
@@ -318,7 +318,8 @@ namespace vk
 		}
 
 		void finish_flush()
-		{}
+		{
+		}
 
 		/**
 		 * Misc
@@ -382,21 +383,20 @@ namespace vk
 			std::unique_ptr<vk::viewable_image> data;
 
 			cached_image_t() = default;
-			cached_image_t(u64 key_, std::unique_ptr<vk::viewable_image>& data_) :
-				key(key_), data(std::move(data_)) {}
+			cached_image_t(u64 key_, std::unique_ptr<vk::viewable_image>& data_)
+				: key(key_), data(std::move(data_)) {}
 		};
 
 	public:
 		enum texture_create_flags : u32
 		{
 			initialize_image_contents = 1,
-			do_not_reuse = 2
+			do_not_reuse              = 2
 		};
 
 		void on_section_destroyed(cached_texture_section& tex) override;
 
 	private:
-
 		// Vulkan internals
 		vk::render_device* m_device;
 		vk::memory_type_mapping m_memory_types;
@@ -407,7 +407,7 @@ namespace vk
 		// Stuff that has been dereferenced by the GPU goes into these
 		const u32 max_cached_image_pool_size = 256;
 		std::deque<cached_image_t> m_cached_images;
-		atomic_t<u64> m_cached_memory_size = { 0 };
+		atomic_t<u64> m_cached_memory_size = {0};
 		shared_mutex m_cached_pool_lock;
 
 		// Blocks some operations when exiting
@@ -490,4 +490,4 @@ namespace vk
 
 		bool is_overallocated() const;
 	};
-}
+} // namespace vk

@@ -15,22 +15,24 @@ namespace rsx
 
 	void buffered_section::reset(const address_range& memory_range)
 	{
+		if (locked || !memory_range.valid())
+			return; // Destiny 1 patch for verification fault
 		ensure(memory_range.valid() && locked == false);
 
 		cpu_range = address_range(memory_range);
 		confirmed_range.invalidate();
 		locked_range.invalidate();
 
-		protection = utils::protection::rw;
+		protection       = utils::protection::rw;
 		protection_strat = section_protection_strategy::lock;
-		locked = false;
+		locked           = false;
 
 		init_lockable_range(cpu_range);
 
 		if (memory_range.length() < 4096)
 		{
 			protection_strat = section_protection_strategy::hash;
-			mem_hash = 0;
+			mem_hash         = 0;
 		}
 	}
 
@@ -45,7 +47,13 @@ namespace rsx
 
 	void buffered_section::protect(utils::protection new_prot, bool force)
 	{
-		if (new_prot == protection && !force) return;
+		if (new_prot == protection && !force)
+			return;
+		if (!locked_range.is_page_range())
+		{
+			protection = new_prot;
+			return;
+		}
 
 		ensure(locked_range.is_page_range());
 		AUDIT(!confirmed_range.valid() || confirmed_range.inside(cpu_range));
@@ -76,7 +84,7 @@ namespace rsx
 		}
 
 		protection = new_prot;
-		locked = (protection != utils::protection::rw);
+		locked     = (protection != utils::protection::rw);
 
 		if (!locked)
 		{
@@ -104,7 +112,7 @@ namespace rsx
 			if (confirmed_range.valid())
 			{
 				confirmed_range.start = std::min(confirmed_range.start, cpu_range.start + new_confirm.first);
-				confirmed_range.end = std::max(confirmed_range.end, cpu_range.start + new_confirm.first + new_confirm.second - 1);
+				confirmed_range.end   = std::max(confirmed_range.end, cpu_range.start + new_confirm.first + new_confirm.second - 1);
 			}
 			else
 			{
@@ -154,12 +162,12 @@ namespace rsx
 
 	u64 buffered_section::fast_hash_internal() const
 	{
-		const auto hash_range = confirmed_range.valid() ? confirmed_range : cpu_range;
+		const auto hash_range  = confirmed_range.valid() ? confirmed_range : cpu_range;
 		const auto hash_length = hash_range.length();
-		const auto cycles = hash_length / 8;
-		auto rem = hash_length % 8;
+		const auto cycles      = hash_length / 8;
+		auto rem               = hash_length % 8;
 
-		auto src = get_ptr<const char>(hash_range.start);
+		auto src    = get_ptr<const char>(hash_range.start);
 		auto data64 = reinterpret_cast<const u64*>(src);
 
 		usz hash = rpcs3::fnv_seed;
@@ -213,4 +221,4 @@ namespace rsx
 
 		return (fast_hash_internal() == mem_hash);
 	}
-}
+} // namespace rsx
