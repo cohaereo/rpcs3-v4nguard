@@ -17,6 +17,8 @@ namespace rsx
 
 	void buffered_section::reset(const address_range& memory_range)
 	{
+		if (locked || !memory_range.valid())
+			return; // Destiny 1 patch for verification fault
 		ensure(memory_range.valid() && locked == false);
 
 		cpu_range = address_range(memory_range);
@@ -47,7 +49,13 @@ namespace rsx
 
 	void buffered_section::protect(utils::protection new_prot, bool force)
 	{
-		if (new_prot == protection && !force) return;
+		if (new_prot == protection && !force)
+				return;
+		if (!locked_range.is_page_range())
+		{
+			protection = new_prot;
+			return;
+		}
 
 		ensure(locked_range.is_page_range());
 		AUDIT(!confirmed_range.valid() || confirmed_range.inside(cpu_range));

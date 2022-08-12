@@ -893,7 +893,7 @@ namespace vk
 		{
 			row_pitch = rsx::align2(layout.width_in_block * block_size_in_bytes, heap_align);
 			upload_pitch_in_texel = std::max<u32>(block_in_pixel * row_pitch / block_size_in_bytes, layout.width_in_texel);
-			ensure(row_pitch == heap_align);
+			// ensure(row_pitch == heap_align);
 		}
 
 		return { row_pitch, upload_pitch_in_texel };

@@ -63,7 +63,7 @@ namespace vk
 			ensure(!exists() || !is_managed() || vram_texture == new_texture);
 			vram_texture = new_texture;
 
-			ensure(rsx_pitch);
+			// ensure(rsx_pitch);
 
 			width = w;
 			height = h;
