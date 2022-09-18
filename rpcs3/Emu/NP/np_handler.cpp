@@ -384,9 +384,7 @@ namespace np
 			return;
 		}
 
-		ar(is_NP_Lookup_init, is_NP_Score_init, is_NP2_init, is_NP2_Match2_init, is_NP_Auth_init
-			, manager_cb, manager_cb_arg, std::as_bytes(std::span(&basic_handler, 1)), is_connected, is_psn_active
-			, hostname, ether_address, local_ip_addr, public_ip_addr, dns_ip);
+		ar(is_NP_Lookup_init, is_NP_Score_init, is_NP2_init, is_NP2_Match2_init, is_NP_Auth_init, manager_cb, manager_cb_arg, std::as_bytes(std::span(&basic_handler, 1)), is_connected, is_psn_active, hostname, ether_address, local_ip_addr, public_ip_addr, dns_ip);
 
 		// Call init func if needed (np_memory is unaffected when an empty pool is provided)
 		init_NP(0, vm::null);
@@ -408,9 +406,7 @@ namespace np
 
 		USING_SERIALIZATION_VERSION(sceNp);
 
-		ar(is_NP_Lookup_init, is_NP_Score_init, is_NP2_init, is_NP2_Match2_init, is_NP_Auth_init
-			, manager_cb, manager_cb_arg, std::as_bytes(std::span(&basic_handler, 1)), is_connected, is_psn_active
-			, hostname, ether_address, local_ip_addr, public_ip_addr, dns_ip);
+		ar(is_NP_Lookup_init, is_NP_Score_init, is_NP2_init, is_NP2_Match2_init, is_NP_Auth_init, manager_cb, manager_cb_arg, std::as_bytes(std::span(&basic_handler, 1)), is_connected, is_psn_active, hostname, ether_address, local_ip_addr, public_ip_addr, dns_ip);
 
 		np_memory.save(ar);
 	}

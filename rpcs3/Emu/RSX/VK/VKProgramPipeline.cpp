@@ -22,8 +22,9 @@ namespace vk
 
 			if (!vk::compile_glsl_to_spv(m_source, type, m_compiled))
 			{
-				const std::string shader_type = type == ::glsl::program_domain::glsl_vertex_program ? "vertex" :
-					type == ::glsl::program_domain::glsl_fragment_program ? "fragment" : "compute";
+				const std::string shader_type = type == ::glsl::program_domain::glsl_vertex_program   ? "vertex" :
+				                                type == ::glsl::program_domain::glsl_fragment_program ? "fragment" :
+				                                                                                        "compute";
 
 				rsx_log.notice("%s", m_source);
 				fmt::throw_exception("Failed to compile %s shader", shader_type);
@@ -70,16 +71,16 @@ namespace vk
 
 		void program::create_impl()
 		{
-			linked = false;
+			linked                  = false;
 			attribute_location_mask = 0;
-			vertex_attributes_mask = 0;
+			vertex_attributes_mask  = 0;
 
 			fs_texture_bindings.fill(~0u);
 			fs_texture_mirror_bindings.fill(~0u);
 			vs_texture_bindings.fill(~0u);
 		}
 
-		program::program(VkDevice dev, VkPipeline p, VkPipelineLayout layout, const std::vector<program_input> &vertex_input, const std::vector<program_input>& fragment_inputs)
+		program::program(VkDevice dev, VkPipeline p, VkPipelineLayout layout, const std::vector<program_input>& vertex_input, const std::vector<program_input>& fragment_inputs)
 			: m_device(dev), pipeline(p), pipeline_layout(layout)
 		{
 			create_impl();
@@ -102,7 +103,7 @@ namespace vk
 		{
 			ensure(!linked); // "Cannot change uniforms in already linked program!"
 
-			for (auto &item : inputs)
+			for (auto& item : inputs)
 			{
 				uniforms[item.type].push_back(item);
 			}
@@ -114,15 +115,15 @@ namespace vk
 		{
 			// Preprocess texture bindings
 			// Link step is only useful for rasterizer programs, compute programs do not need this
-			for (const auto &uniform : uniforms[program_input_type::input_type_texture])
+			for (const auto& uniform : uniforms[program_input_type::input_type_texture])
 			{
 				if (const auto name_start = uniform.name.find("tex"); name_start != umax)
 				{
-					const auto name_end = uniform.name.find("_stencil");
-					const auto index_start = name_start + 3;  // Skip 'tex' part
+					const auto name_end     = uniform.name.find("_stencil");
+					const auto index_start  = name_start + 3; // Skip 'tex' part
 					const auto index_length = (name_end != umax) ? name_end - index_start : name_end;
-					const auto index_part = uniform.name.substr(index_start, index_length);
-					const auto index = std::stoi(index_part);
+					const auto index_part   = uniform.name.substr(index_start, index_length);
+					const auto index        = std::stoi(index_part);
 
 					if (name_start == 0)
 					{
@@ -154,14 +155,14 @@ namespace vk
 		{
 			const auto& uniform = uniforms[type];
 			return std::any_of(uniform.cbegin(), uniform.cend(), [&uniform_name](const auto& u)
-			{
-				return u.name == uniform_name;
-			});
+				{
+					return u.name == uniform_name;
+				});
 		}
 
-		void program::bind_uniform(const VkDescriptorImageInfo &image_descriptor, const std::string& uniform_name, VkDescriptorType type, vk::descriptor_set &set)
+		void program::bind_uniform(const VkDescriptorImageInfo& image_descriptor, const std::string& uniform_name, VkDescriptorType type, vk::descriptor_set& set)
 		{
-			for (const auto &uniform : uniforms[program_input_type::input_type_texture])
+			for (const auto& uniform : uniforms[program_input_type::input_type_texture])
 			{
 				if (uniform.name == uniform_name)
 				{
@@ -174,7 +175,7 @@ namespace vk
 			rsx_log.notice("texture not found in program: %s", uniform_name.c_str());
 		}
 
-		void program::bind_uniform(const VkDescriptorImageInfo & image_descriptor, int texture_unit, ::glsl::program_domain domain, vk::descriptor_set &set, bool is_stencil_mirror)
+		void program::bind_uniform(const VkDescriptorImageInfo& image_descriptor, int texture_unit, ::glsl::program_domain domain, vk::descriptor_set& set, bool is_stencil_mirror)
 		{
 			ensure(domain != ::glsl::program_domain::glsl_compute_program);
 
@@ -195,23 +196,23 @@ namespace vk
 				return;
 			}
 
-			rsx_log.notice("texture not found in program: %stex%u", (domain == ::glsl::program_domain::glsl_vertex_program)? "v" : "", texture_unit);
+			rsx_log.notice("texture not found in program: %stex%u", (domain == ::glsl::program_domain::glsl_vertex_program) ? "v" : "", texture_unit);
 		}
 
-		void program::bind_uniform(const VkDescriptorBufferInfo &buffer_descriptor, u32 binding_point, vk::descriptor_set &set)
+		void program::bind_uniform(const VkDescriptorBufferInfo& buffer_descriptor, u32 binding_point, vk::descriptor_set& set)
 		{
 			bind_buffer(buffer_descriptor, binding_point, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, set);
 		}
 
-		void program::bind_uniform(const VkBufferView &buffer_view, u32 binding_point, vk::descriptor_set &set)
+		void program::bind_uniform(const VkBufferView& buffer_view, u32 binding_point, vk::descriptor_set& set)
 		{
 			set.push(buffer_view, VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, binding_point);
 			attribute_location_mask |= (1ull << binding_point);
 		}
 
-		void program::bind_uniform(const VkBufferView &buffer_view, program_input_type type, const std::string &binding_name, vk::descriptor_set &set)
+		void program::bind_uniform(const VkBufferView& buffer_view, program_input_type type, const std::string& binding_name, vk::descriptor_set& set)
 		{
-			for (const auto &uniform : uniforms[type])
+			for (const auto& uniform : uniforms[type])
 			{
 				if (uniform.name == binding_name)
 				{
@@ -223,10 +224,10 @@ namespace vk
 			rsx_log.notice("vertex buffer not found in program: %s", binding_name.c_str());
 		}
 
-		void program::bind_buffer(const VkDescriptorBufferInfo &buffer_descriptor, u32 binding_point, VkDescriptorType type, vk::descriptor_set &set)
+		void program::bind_buffer(const VkDescriptorBufferInfo& buffer_descriptor, u32 binding_point, VkDescriptorType type, vk::descriptor_set& set)
 		{
 			set.push(buffer_descriptor, type, binding_point);
 			attribute_location_mask |= (1ull << binding_point);
 		}
-	}
-}
+	} // namespace glsl
+} // namespace vk

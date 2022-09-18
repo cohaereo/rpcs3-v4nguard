@@ -58,44 +58,44 @@ namespace gl
 			glTexParameteri(target, GL_TEXTURE_BASE_LEVEL, 0);
 			glTexParameteri(target, GL_TEXTURE_MAX_LEVEL, mipmaps - 1);
 
-			m_width = width;
-			m_height = height;
-			m_depth = depth;
-			m_mipmaps = mipmaps;
+			m_width        = width;
+			m_height       = height;
+			m_depth        = depth;
+			m_mipmaps      = mipmaps;
 			m_aspect_flags = image_aspect::color;
 
 			switch (storage_fmt)
 			{
 			case GL_DEPTH_COMPONENT16:
 			{
-				m_pitch = width * 2;
+				m_pitch        = width * 2;
 				m_aspect_flags = image_aspect::depth;
 				break;
 			}
 			case GL_DEPTH_COMPONENT32F:
 			{
-				m_pitch = width * 4;
+				m_pitch        = width * 4;
 				m_aspect_flags = image_aspect::depth;
 				break;
 			}
 			case GL_DEPTH24_STENCIL8:
 			case GL_DEPTH32F_STENCIL8:
 			{
-				m_pitch = width * 4;
+				m_pitch        = width * 4;
 				m_aspect_flags = image_aspect::depth | image_aspect::stencil;
 				break;
 			}
 			case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
 			{
 				m_compressed = true;
-				m_pitch = utils::align(width, 4) / 2;
+				m_pitch      = utils::align(width, 4) / 2;
 				break;
 			}
 			case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
 			case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
 			{
 				m_compressed = true;
-				m_pitch = utils::align(width, 4);
+				m_pitch      = utils::align(width, 4);
 				break;
 			}
 			default:
@@ -115,7 +115,8 @@ namespace gl
 
 			if (!m_pitch)
 			{
-				fmt::throw_exception("Unhandled GL format 0x%X", sized_format);
+				m_pitch = width * 4;
+				// fmt::throw_exception("Unhandled GL format 0x%X", sized_format);
 			}
 
 			if (format_class == RSX_FORMAT_CLASS_UNDEFINED)
@@ -131,10 +132,10 @@ namespace gl
 			}
 		}
 
-		m_target = static_cast<texture::target>(target);
-		m_internal_format = static_cast<internal_format>(sized_format);
-		m_component_layout = { GL_ALPHA, GL_RED, GL_GREEN, GL_BLUE };
-		m_format_class = format_class;
+		m_target           = static_cast<texture::target>(target);
+		m_internal_format  = static_cast<internal_format>(sized_format);
+		m_component_layout = {GL_ALPHA, GL_RED, GL_GREEN, GL_BLUE};
+		m_format_class     = format_class;
 	}
 
 	texture::~texture()
@@ -175,12 +176,12 @@ namespace gl
 			else
 			{
 				rsx_log.warning("Cubemap upload via texture::copy_from is halfplemented!");
-				auto ptr = static_cast<const u8*>(src);
+				auto ptr       = static_cast<const u8*>(src);
 				const auto end = std::min(6u, region.z + region.depth);
 				for (unsigned face = region.z; face < end; ++face)
 				{
 					glTextureSubImage2DEXT(m_id, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, level, region.x, region.y, region.width, region.height, static_cast<GLenum>(format), static_cast<GLenum>(type), ptr);
-					ptr += (region.width * region.height * 4); //TODO
+					ptr += (region.width * region.height * 4); // TODO
 				}
 			}
 			break;
@@ -210,34 +211,34 @@ namespace gl
 			region.width == m_width && region.height == m_height && region.depth == m_depth)
 		{
 			if (caps.ARB_dsa_supported)
-				glGetTextureImage(m_id, level, static_cast<GLenum>(format), static_cast<GLenum>(type), s32{ smax }, dst);
+				glGetTextureImage(m_id, level, static_cast<GLenum>(format), static_cast<GLenum>(type), s32{smax}, dst);
 			else
 				glGetTextureImageEXT(m_id, static_cast<GLenum>(m_target), level, static_cast<GLenum>(format), static_cast<GLenum>(type), dst);
 		}
 		else if (caps.ARB_dsa_supported)
 		{
 			glGetTextureSubImage(m_id, level, region.x, region.y, region.z, region.width, region.height, region.depth,
-				static_cast<GLenum>(format), static_cast<GLenum>(type), s32{ smax }, dst);
+				static_cast<GLenum>(format), static_cast<GLenum>(type), s32{smax}, dst);
 		}
 		else
 		{
 			// Worst case scenario. For some reason, EXT_dsa does not have glGetTextureSubImage
 			const auto target_ = static_cast<GLenum>(m_target);
-			texture tmp{ target_, region.width, region.height, region.depth, 1, static_cast<GLenum>(m_internal_format) };
+			texture tmp{target_, region.width, region.height, region.depth, 1, static_cast<GLenum>(m_internal_format)};
 			glCopyImageSubData(m_id, target_, level, region.x, region.y, region.z, tmp.id(), target_, 0, 0, 0, 0,
 				region.width, region.height, region.depth);
 
-			const coord3u region2 = { {0, 0, 0}, region.size };
+			const coord3u region2 = {{0, 0, 0}, region.size};
 			tmp.copy_to(dst, format, type, 0, region2, pixel_settings);
 		}
 	}
 
 	void texture_view::create(texture* data, GLenum target, GLenum sized_format, const subresource_range& range, const GLenum* argb_swizzle)
 	{
-		m_target = target;
-		m_format = sized_format;
-		m_view_format = sizedfmt_to_ifmt(sized_format);
-		m_image_data = data;
+		m_target       = target;
+		m_format       = sized_format;
+		m_view_format  = sizedfmt_to_ifmt(sized_format);
+		m_image_data   = data;
 		m_aspect_flags = range.aspect_mask & data->aspect();
 
 		ensure(m_aspect_flags);
@@ -288,12 +289,12 @@ namespace gl
 
 	nil_texture_view::nil_texture_view(texture* data)
 	{
-		m_id = data->id();
-		m_target = static_cast<GLenum>(data->get_target());
-		m_format = static_cast<GLenum>(data->get_internal_format());
-		m_view_format = sizedfmt_to_ifmt(m_format);
+		m_id           = data->id();
+		m_target       = static_cast<GLenum>(data->get_target());
+		m_format       = static_cast<GLenum>(data->get_internal_format());
+		m_view_format  = sizedfmt_to_ifmt(m_format);
 		m_aspect_flags = data->aspect();
-		m_image_data = data;
+		m_image_data   = data;
 
 		component_swizzle[0] = GL_RED;
 		component_swizzle[1] = GL_GREEN;
@@ -308,7 +309,7 @@ namespace gl
 
 	texture_view* viewable_image::get_view(u32 remap_encoding, const std::pair<std::array<u8, 4>, std::array<u8, 4>>& remap_, GLenum aspect_flags)
 	{
-		auto remap = remap_;
+		auto remap            = remap_;
 		const u64 view_aspect = static_cast<u64>(aspect_flags) & aspect();
 		ensure(view_aspect);
 
@@ -329,7 +330,7 @@ namespace gl
 			swizzle = mapping.data();
 		}
 
-		auto view = std::make_unique<texture_view>(this, swizzle, aspect_flags);
+		auto view   = std::make_unique<texture_view>(this, swizzle, aspect_flags);
 		auto result = view.get();
 		views.emplace(key, std::move(view));
 		return result;
@@ -346,4 +347,4 @@ namespace gl
 			views.clear();
 		}
 	}
-}
+} // namespace gl

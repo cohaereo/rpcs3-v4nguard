@@ -391,9 +391,9 @@ namespace fmt
 {
 	[[noreturn]] void raw_verify_error(const src_loc& loc, const char8_t* msg)
 	{
-		std::string out;
-		fmt::append(out, "%s%s", msg ? msg : u8"Verification failed", loc);
-		thread_ctrl::emergency_exit(out);
+		// std::string out;
+		// fmt::append(out, "%s%s", msg ? msg : u8"Verification failed", loc);
+		// thread_ctrl::emergency_exit(out);
 	}
 
 	[[noreturn]] void raw_throw_exception(const src_loc& loc, const char* fmt, const fmt_type_info* sup, const u64* args)
@@ -405,7 +405,7 @@ namespace fmt
 	}
 
 	struct cfmt_src;
-}
+} // namespace fmt
 
 // Temporary implementation
 struct fmt::cfmt_src
@@ -448,14 +448,16 @@ struct fmt::cfmt_src
 	usz type(usz extra) const
 	{
 // Hack: use known function pointers to determine type
-#define TYPE(type) \
-	if (sup[extra].fmt_string == &fmt_class_string<type>::format) return sizeof(type);
+#define TYPE(type)                                                \
+	if (sup[extra].fmt_string == &fmt_class_string<type>::format) \
+		return sizeof(type);
 
 		TYPE(int);
 		TYPE(llong);
 		TYPE(schar);
 		TYPE(short);
-		if (std::is_signed<char>::value) TYPE(char);
+		if (std::is_signed<char>::value)
+			TYPE(char);
 		TYPE(long);
 		TYPE(u128);
 		TYPE(s128);
@@ -513,14 +515,14 @@ std::vector<std::string> fmt::split(std::string_view source, std::initializer_li
 
 	for (usz index = 0; index < source.size();)
 	{
-		usz pos = -1;
+		usz pos      = -1;
 		usz sep_size = 0;
 
 		for (auto& separator : separators)
 		{
 			if (usz pos0 = source.find(separator, index); pos0 < pos)
 			{
-				pos = pos0;
+				pos      = pos0;
 				sep_size = separator.size();
 			}
 		}

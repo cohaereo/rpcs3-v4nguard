@@ -101,7 +101,7 @@ namespace gl
 			synchronized = false;
 			sync_timestamp = 0ull;
 
-			ensure(rsx_pitch);
+			// ensure(rsx_pitch);
 
 			this->rsx_pitch = rsx_pitch;
 			this->width = w;
@@ -626,7 +626,7 @@ namespace gl
 			const rsx::image_section_attributes_t search_desc = { .gcm_format = gcm_format, .width = width, .height = height, .depth = depth, .mipmaps = mipmaps };
 			const bool allow_dirty = (context != rsx::texture_upload_context::framebuffer_storage);
 			auto& cached = *find_cached_texture(rsx_range, search_desc, true, true, allow_dirty);
-			ensure(!cached.is_locked());
+			// ensure(!cached.is_locked());
 
 			gl::viewable_image* image = nullptr;
 			if (cached.exists())
